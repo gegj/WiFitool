@@ -50,13 +50,13 @@ namespace WiFitool.Services
                 var json = await client.GetStringAsync(LatestReleaseApiUrl);
                 var release = ReadRelease(json);
                 SemanticVersion remoteVersion;
-                if (release == null || !SemanticVersion.TryParse(release.TagName, out remoteVersion)) return UpdateCheckResult.Failed("GitHub Release 的版本标签不是有效的 SemVer 版本。");
+                if (release == null || !SemanticVersion.TryParse(release.TagName, out remoteVersion)) return UpdateCheckResult.Failed("最新版本信息格式无效。");
 
                 var localVersion = SemanticVersion.FromAssemblyVersion(currentVersion);
                 if (remoteVersion.CompareTo(localVersion) <= 0) return UpdateCheckResult.NoUpdate();
 
                 var asset = release.Assets == null ? null : release.Assets.FirstOrDefault(x => string.Equals(x.Name, UpdateAssetName, StringComparison.OrdinalIgnoreCase));
-                if (asset == null || string.IsNullOrWhiteSpace(asset.DownloadUrl)) return UpdateCheckResult.Failed("最新 Release 未找到 " + UpdateAssetName + " 附件。");
+                if (asset == null || string.IsNullOrWhiteSpace(asset.DownloadUrl)) return UpdateCheckResult.Failed("最新版本缺少更新文件。");
 
                 return UpdateCheckResult.Available(new UpdateInfo
                 {
@@ -65,7 +65,7 @@ namespace WiFitool.Services
                     Notes = release.Body ?? ""
                 });
             }
-            catch (Exception ex) { return UpdateCheckResult.Failed("无法连接 GitHub：" + ex.Message); }
+            catch (Exception ex) { return UpdateCheckResult.Failed("无法连接更新服务：" + ex.Message); }
         }
 
         public async Task<string> DownloadUpdateAsync(UpdateInfo update, IProgress<int> progress)

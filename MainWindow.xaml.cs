@@ -179,9 +179,7 @@ namespace WiFitool
                     return;
                 }
 
-                var message = "发现新版本 v" + result.Update.Version + "\n当前版本 v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3);
-                if (!string.IsNullOrWhiteSpace(result.Update.Notes)) message += "\n\n更新说明：\n" + result.Update.Notes.Trim();
-                message += "\n\n是否立即下载并安装？";
+                var message = "检测到新版本 v" + result.Update.Version + "\n当前版本 v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3) + "\n\n是否立即下载并安装？";
                 if (MessageBox.Show(this, message, "发现新版本", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
                 {
                     StatusText.Text = "已发现新版本 v" + result.Update.Version;
