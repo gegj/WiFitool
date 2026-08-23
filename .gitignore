@@ -1,3 +1,8 @@
-/bin
-/NUL
-/obj
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.pdb
+luac.out
+NUL

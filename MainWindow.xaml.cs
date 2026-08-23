@@ -27,6 +27,7 @@ namespace WiFitool
         private readonly FileSystemService fileSystemService;
         private readonly AdbService adbService;
         private readonly RootfsFeatureService rootfsFeatureService = new RootfsFeatureService();
+        private readonly UpdateService updateService = new UpdateService();
         private readonly DispatcherTimer adbTimer;
         private readonly ObservableCollection<WorkspaceEntry> files = new ObservableCollection<WorkspaceEntry>();
         private readonly Dictionary<int, List<StartupSource>> startupSourcesByPid = new Dictionary<int, List<StartupSource>>();
@@ -48,6 +49,7 @@ namespace WiFitool
         private bool compactLayout;
         private bool compactSidebar;
         private bool compactContentMargin;
+        private bool updateChecking;
 
         public MainWindow()
         {
@@ -62,7 +64,7 @@ namespace WiFitool
             var baseTools = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tools"); var ready = File.Exists(Path.Combine(baseTools, "adb", "adb.exe")) && File.Exists(Path.Combine(baseTools, "squashfs", "unsquashfs.exe")) && File.Exists(Path.Combine(baseTools, "squashfs", "mksquashfs.exe")) && File.Exists(Path.Combine(baseTools, "mtd-utils", "mkfs.jffs2.exe")) && File.Exists(Path.Combine(baseTools, "jefferson", "jefferson.exe"));
             EnvironmentText.Text = ready ? "工具环境：正常" : "工具环境：缺少工具";
             SizeChanged += MainWindow_SizeChanged;
-            Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); adbTimer.Start(); await CheckAdbStatusAsync(); };
+            Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
             Closing += delegate { adbTimer.Stop(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); };
             ProcessGrid.ContextMenu = CreateProcessMenu(false);
             CoreProcessGrid.ContextMenu = CreateProcessMenu(true);
@@ -141,6 +143,68 @@ namespace WiFitool
             }
 
             responsiveLayoutInitialized = true;
+        }
+
+        private async void CheckUpdateButton_Click(object sender, RoutedEventArgs e)
+        {
+            await CheckForUpdatesAsync(true);
+        }
+
+        private async Task CheckForUpdatesAsync(bool userInitiated)
+        {
+            if (updateChecking) return;
+            if (activeCancellation != null)
+            {
+                if (userInitiated) MessageBox.Show(this, "请等待当前操作完成后再检查更新。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            updateChecking = true;
+            CheckUpdateButton.IsEnabled = false;
+            StatusText.Text = "正在检查更新…";
+            try
+            {
+                var result = await updateService.CheckForUpdateAsync(typeof(MainWindow).Assembly.GetName().Version);
+                if (string.IsNullOrEmpty(result.Error)) updateService.MarkCheckCompleted();
+                if (!string.IsNullOrEmpty(result.Error))
+                {
+                    StatusText.Text = "更新检查失败";
+                    if (userInitiated) MessageBox.Show(this, result.Error, "检查更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+                if (!result.HasUpdate)
+                {
+                    StatusText.Text = "当前已是最新版本";
+                    if (userInitiated) MessageBox.Show(this, "当前已是最新版本。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                var message = "发现新版本 v" + result.Update.Version + "\n当前版本 v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3);
+                if (!string.IsNullOrWhiteSpace(result.Update.Notes)) message += "\n\n更新说明：\n" + result.Update.Notes.Trim();
+                message += "\n\n是否立即下载并安装？";
+                if (MessageBox.Show(this, message, "发现新版本", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
+                {
+                    StatusText.Text = "已发现新版本 v" + result.Update.Version;
+                    return;
+                }
+
+                StatusText.Text = "正在下载更新…";
+                var progress = new Progress<int>(value => StatusText.Text = "正在下载更新… " + value + "%");
+                var downloadedPath = await updateService.DownloadUpdateAsync(result.Update, progress);
+                updateService.ReplaceAfterExit(downloadedPath);
+                StatusText.Text = "更新准备完成，正在重启…";
+                Application.Current.Shutdown();
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = "更新失败";
+                MessageBox.Show(this, ex.Message, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                updateChecking = false;
+                CheckUpdateButton.IsEnabled = true;
+            }
         }
 
         private async void OpenButton_Click(object sender, RoutedEventArgs e)
