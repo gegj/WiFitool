@@ -19,12 +19,23 @@ namespace WiFitool.Models
         {
             get
             {
+                var value = (Modified ?? "").Trim();
+                long timestamp;
+                if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out timestamp))
+                {
+                    try
+                    {
+                        var date = Math.Abs(timestamp) >= 100000000000L ? DateTimeOffset.FromUnixTimeMilliseconds(timestamp).LocalDateTime : DateTimeOffset.FromUnixTimeSeconds(timestamp).LocalDateTime;
+                        return date.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                    }
+                    catch (ArgumentOutOfRangeException) { }
+                }
                 DateTime parsed;
-                if (DateTime.TryParseExact(Modified, "MMM d HH:mm:ss yyyy", CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsed) || DateTime.TryParse(Modified, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsed) || DateTime.TryParse(Modified, CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces, out parsed))
+                if (DateTime.TryParseExact(value, "MMM d HH:mm:ss yyyy", CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsed) || DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsed) || DateTime.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces, out parsed))
                 {
                     return parsed.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
                 }
-                return Modified ?? "";
+                return value;
             }
         }
         public string Encoding { get; set; }
