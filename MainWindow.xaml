@@ -1,0 +1,308 @@
+<Window x:Class="WiFitool.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:WiFitool.Views"
+        Title="WiFitool v0.16.10"
+        Width="1250" Height="900" MinWidth="860" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBrush}"
+        AllowDrop="True"
+        PreviewDragEnter="Window_PreviewDragEnter"
+        PreviewDragOver="Window_PreviewDragOver"
+        PreviewDragLeave="Window_PreviewDragLeave"
+        PreviewDrop="Window_PreviewDrop"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition x:Name="HeaderRow" Height="78" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="32" />
+    </Grid.RowDefinitions>
+
+    <!-- 顶部品牌和操作区 -->
+    <Grid Grid.Row="0">
+      <Grid.ColumnDefinitions><ColumnDefinition x:Name="HeaderSidebarColumn" Width="240" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Background="{DynamicResource SidebarBrush}" Padding="23,0">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+          <Border Width="36" Height="36" CornerRadius="10" Background="{DynamicResource AccentBrush}" VerticalAlignment="Center">
+            <TextBlock Text="W" Foreground="#FFFFFF" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+            <TextBlock Text="WiFitool" Foreground="#FFFFFF" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="FIRMWARE WORKBENCH" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="9" FontWeight="SemiBold" Margin="0,3,0,0" />
+          </StackPanel>
+        </Grid>
+      </Border>
+      <Border Grid.Column="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="26,0,24,0">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition x:Name="HeaderStatusRow" Height="0" /></Grid.RowDefinitions>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <StackPanel x:Name="HeaderTitlePanel" VerticalAlignment="Center">
+            <TextBlock x:Name="HeaderTitleText" Text="固件分析与设备文件管理" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+            <TextBlock x:Name="HeaderSubtitleText" Text="分析、解包、编辑并导出设备固件" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,4,0,0" />
+          </StackPanel>
+          <StackPanel x:Name="HeaderActionsPanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,20,0">
+            <Button x:Name="OpenButton" Content="打开固件" Click="OpenButton_Click" Style="{StaticResource PrimaryButton}" />
+            <Button x:Name="CloseButton" Content="关闭项目" Click="CloseButton_Click" IsEnabled="False" />
+            <Button x:Name="AdbExportButton" Content="一键提取固件" Click="AdbExportButton_Click" IsEnabled="False" />
+          </StackPanel>
+          <Button x:Name="AdbStatusButton" Grid.Column="2" Click="AdbStatusButton_Click" Background="{DynamicResource PanelAltBrush}" BorderBrush="{DynamicResource BorderBrush}" Padding="10,5" Height="52" Width="258" Margin="0" HorizontalContentAlignment="Stretch" ToolTip="查看 ADB 设备详情">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="18" /></Grid.ColumnDefinitions>
+              <Ellipse x:Name="AdbDot" Width="8" Height="8" Fill="{DynamicResource DisabledBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+              <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
+                <TextBlock x:Name="AdbStatusText" Text="ADB 设备检测中" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock x:Name="AdbStatusSummaryText" Text="等待设备连接" Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+              <TextBlock Grid.Column="2" x:Name="AdbStatusChevron" Text="⌃" Foreground="{DynamicResource MutedBrush}" FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Center" />
+            </Grid>
+          </Button>
+          <Popup x:Name="AdbDetailsPopup" PlacementTarget="{Binding ElementName=AdbStatusButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" HorizontalOffset="-42" VerticalOffset="8">
+            <Border Width="300" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="11" Padding="14">
+              <Border.Effect><DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.38" Color="#000000" /></Border.Effect>
+              <StackPanel>
+                <Grid Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock x:Name="AdbDeviceTypeText" Text="设备类型未知" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock x:Name="AdbVersionText" Text="软件版本未知" Foreground="{DynamicResource TextBrush}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" Cursor="Hand" ToolTip="点击复制软件版本" MouseLeftButtonUp="AdbVersionText_MouseLeftButtonUp" />
+                  </StackPanel>
+                  <Button x:Name="AdbRefreshButton" Grid.Column="1" Content="⟳  重新检测" Click="AdbRefreshButton_Click" Height="34" Padding="10,4" Margin="8,0,0,0" />
+                </Grid>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <Grid Margin="0,11,0,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <TextBlock Text="ADB 服务端口" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                  <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <TextBlock x:Name="AdbPortText" Text="127.0.0.1:5037" FontSize="11" Margin="0,0,8,0" />
+                    <TextBlock x:Name="AdbPortStateText" Text="未连接" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold" FontSize="11" MinWidth="42" TextAlignment="Right" />
+                  </StackPanel>
+                </Grid>
+                <Grid Margin="0,12,0,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <TextBlock Text="设备状态" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                  <TextBlock Grid.Column="1" x:Name="AdbDeviceStateText" Text="未连接" FontWeight="SemiBold" FontSize="11" />
+                </Grid>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,11,0,0" />
+                <StackPanel Margin="0,11,0,0">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock x:Name="AdbSystemTitleText" Text="系统分区 /" FontSize="10" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                    <TextBlock x:Name="AdbSystemFreeText" Text="-- 剩余" FontSize="10" FontWeight="SemiBold" MinWidth="78" TextAlignment="Right" />
+                  </Grid>
+                  <ProgressBar x:Name="AdbSystemProgress" Height="6" Minimum="0" Maximum="100" Value="0" Foreground="{DynamicResource AccentBrush}" Background="{DynamicResource BorderBrush}" BorderThickness="0" Margin="0,7,0,5" />
+                  <TextBlock x:Name="AdbSystemUsageText" Text="未获取分区信息" Foreground="{DynamicResource MutedBrush}" FontSize="10" />
+                </StackPanel>
+                <StackPanel Margin="0,13,0,0">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock x:Name="AdbUserdataTitleText" Text="用户分区 /mnt/userdata" FontSize="10" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                    <TextBlock x:Name="AdbUserdataFreeText" Text="-- 剩余" FontSize="10" FontWeight="SemiBold" MinWidth="78" TextAlignment="Right" />
+                  </Grid>
+                  <ProgressBar x:Name="AdbUserdataProgress" Height="6" Minimum="0" Maximum="100" Value="0" Foreground="{DynamicResource AccentBrush}" Background="{DynamicResource BorderBrush}" BorderThickness="0" Margin="0,7,0,5" />
+                  <TextBlock x:Name="AdbUserdataUsageText" Text="未获取分区信息" Foreground="{DynamicResource MutedBrush}" FontSize="10" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </Popup>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- 左侧导航与主工作区 -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions><ColumnDefinition x:Name="WorkspaceSidebarColumn" Width="240" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Background="{DynamicResource SidebarBrush}" Padding="17,22,17,14">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <TextBlock Text="工作台" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="11" FontWeight="SemiBold" Margin="12,0,0,12" />
+          <StackPanel Grid.Row="1">
+            <Button x:Name="OverviewNav" Click="OverviewNav_Click" Style="{StaticResource NavButton}" Background="{DynamicResource SidebarSelectedBrush}">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="▣" Width="25" Foreground="#FFFFFF" FontSize="16" /><TextBlock Text="项目概览" Foreground="#FFFFFF" /></StackPanel>
+            </Button>
+            <Button x:Name="FilesNav" Click="FilesNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="▤" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="16" /><TextBlock Text="文件管理" /></StackPanel>
+            </Button>
+            <Button x:Name="ProcessNav" Click="ProcessNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="⌁" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="18" /><TextBlock Text="进程和启动" /></StackPanel>
+            </Button>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Border Grid.Column="1" Background="{DynamicResource WindowBrush}">
+        <Grid x:Name="WorkspaceContentGrid" Margin="26,20,26,18">
+          <!-- 项目概览 -->
+          <Grid x:Name="OverviewView">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <StackPanel Margin="0,0,0,17">
+              <TextBlock Text="项目概览" FontSize="23" FontWeight="SemiBold" />
+              <TextBlock Text="选择固件后查看分区结构，双击分区即可开始解包" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+            </StackPanel>
+            <Grid x:Name="OverviewSummaryGrid" Grid.Row="1" Margin="0,0,0,17">
+              <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="0" /></Grid.RowDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Border x:Name="ImageSummaryCard" Grid.Column="0" Style="{StaticResource CardStyle}" Padding="17" Margin="0,0,10,0">
+                <StackPanel>
+                  <TextBlock Text="当前固件" Foreground="{DynamicResource MutedBrush}" FontSize="12" />
+                  <TextBlock x:Name="ImageSummary" Text="未打开固件" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+              <Border x:Name="SelectedPartitionCard" Grid.Column="1" Style="{StaticResource CardStyle}" Padding="17" Margin="5,0,5,0">
+                <StackPanel>
+                  <TextBlock Text="当前分区" Foreground="{DynamicResource MutedBrush}" FontSize="12" />
+                  <TextBlock x:Name="SelectedPartitionText" Text="未选择分区" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+              <Border x:Name="WorkflowCard" Grid.Column="2" Style="{StaticResource CardStyle}" Padding="17" Margin="10,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="工作流" Foreground="{DynamicResource MutedBrush}" FontSize="12" />
+                  <TextBlock Text="分析 → 解包 → 编辑 → 导出" Foreground="{DynamicResource TextBrush}" FontSize="15" FontWeight="SemiBold" Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+            </Grid>
+            <views:RoundedClipBorder Grid.Row="2" Style="{StaticResource CardStyle}" Padding="0">
+              <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="58" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Grid Grid.Row="0" Margin="18,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="分区详情" FontWeight="SemiBold" FontSize="15" />
+                    <TextBlock Text="选择分区后可解包，已解包分区会显示当前状态" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,3,0,0" />
+                  </StackPanel>
+                  <Button Grid.Column="1" x:Name="ExtractButton" Content="开始解包" Click="ExtractButton_Click" IsEnabled="False" Style="{StaticResource PrimaryButton}" VerticalAlignment="Center" Margin="0" />
+                </Grid>
+                <DataGrid Grid.Row="1" x:Name="PartitionGrid" AutoGenerateColumns="False" IsReadOnly="True" SelectionChanged="PartitionGrid_SelectionChanged" MouseDoubleClick="PartitionGrid_MouseDoubleClick" Margin="0,0,0,0">
+                  <DataGrid.Columns>
+                    <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="150" />
+                    <DataGridTextColumn Header="文件系统" Binding="{Binding FileSystem}" Width="110" />
+                    <DataGridTextColumn Header="偏移" Binding="{Binding Offset}" Width="110" />
+                    <DataGridTextColumn Header="容量" Binding="{Binding Size}" Width="120" />
+                    <DataGridTextColumn Header="压缩" Binding="{Binding Compression}" Width="100" />
+                    <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="100" />
+                  </DataGrid.Columns>
+                </DataGrid>
+              </Grid>
+            </views:RoundedClipBorder>
+          </Grid>
+
+          <!-- 文件管理 -->
+          <Grid x:Name="FilesView" Visibility="Collapsed">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <Grid x:Name="FilesHeaderGrid" Grid.Row="0" Margin="0,0,0,17">
+              <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="文件管理" FontSize="23" FontWeight="SemiBold" />
+                <TextBlock Text="浏览本地解包目录或在线设备文件，右键执行编辑和文件操作" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+              </StackPanel>
+              <WrapPanel x:Name="FilesActionsPanel" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
+                <Button x:Name="HostsButton" Content="Hosts 管理" Click="HostsButton_Click" IsEnabled="False" />
+                <Button x:Name="ExportFilesButton" Content="导出系统文件" Click="ExportFilesButton_Click" IsEnabled="False" Visibility="Collapsed" />
+                <Button x:Name="AdbdButton" Content="固化 adbd" Click="AdbdButton_Click" IsEnabled="False" Visibility="Collapsed" />
+                <Button x:Name="AtWebButton" Content="添加 ATWeb" Click="AtWebButton_Click" IsEnabled="False" Visibility="Collapsed" Margin="0" />
+                <Button x:Name="ExportButton" Content="打包固件" Click="ExportButton_Click" IsEnabled="False" Visibility="Collapsed" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" />
+              </WrapPanel>
+            </Grid>
+            <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="6" Margin="0,0,0,12">
+              <Grid x:Name="FileToolbarGrid">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="0" /></Grid.RowDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <WrapPanel x:Name="FileSourcePanel" Grid.Column="0" VerticalAlignment="Center">
+                  <Button x:Name="LocalSourceButton" Content="本地固件" Click="LocalSourceButton_Click" Style="{StaticResource CompactButton}" Background="{DynamicResource AccentBrush}" Foreground="#FFFFFF" />
+                  <Button x:Name="AdbSourceButton" Content="ADB 设备" Click="AdbSourceButton_Click" Style="{StaticResource CompactButton}" Background="{DynamicResource PanelAltBrush}" />
+                  <Button x:Name="NavigateUpButton" Content="↑ 上级目录" Click="NavigateUpButton_Click" Style="{StaticResource CompactButton}" IsEnabled="False" Margin="6,0,0,0" Padding="10,4" ToolTip="返回上级目录" />
+                </WrapPanel>
+                <ScrollViewer x:Name="BreadcrumbScrollViewer" Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center" Margin="10,0,0,0">
+                  <StackPanel x:Name="BreadcrumbPanel" Orientation="Horizontal" VerticalAlignment="Center" />
+                </ScrollViewer>
+              </Grid>
+            </Border>
+            <Grid Grid.Row="2">
+              <views:RoundedClipBorder Style="{StaticResource CardStyle}" Padding="0">
+                <DataGrid x:Name="FileGrid" AutoGenerateColumns="False" IsReadOnly="True" MouseDoubleClick="FileGrid_MouseDoubleClick" AllowDrop="True" PreviewDragOver="FileGrid_PreviewDragOver" Drop="FileGrid_Drop">
+                  <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="名称" Width="2*" MinWidth="200">
+                      <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Icon}" FontFamily="Segoe UI Emoji" FontSize="15" Width="26" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}" />
+                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                          </StackPanel>
+                        </DataTemplate>
+                      </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="类型" Binding="{Binding Kind}" Width="0.8*" MinWidth="80" />
+                    <DataGridTextColumn Header="权限" Binding="{Binding UnixModeDisplay}" Width="0.8*" MinWidth="80" />
+                    <DataGridTextColumn Header="权限文本" Binding="{Binding UnixModeText}" Width="1.2*" MinWidth="100" />
+                    <DataGridTextColumn Header="所有者" Binding="{Binding Owner}" Width="1.1*" MinWidth="100" />
+                    <DataGridTextColumn Header="大小" Binding="{Binding Size}" Width="0.8*" MinWidth="75" />
+                    <DataGridTextColumn Header="修改时间" Binding="{Binding ModifiedDisplay}" Width="1.5*" MinWidth="145" />
+                  </DataGrid.Columns>
+                </DataGrid>
+              </views:RoundedClipBorder>
+            </Grid>
+          </Grid>
+
+          <!-- 进程和启动 -->
+          <Grid x:Name="ProcessView" Visibility="Collapsed">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Grid x:Name="ProcessHeaderGrid" Grid.Row="0" Margin="0,0,0,17">
+              <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="进程和启动" FontSize="23" FontWeight="SemiBold" />
+                <TextBlock Text="查看在线设备进程，右键停止进程或定位启动来源" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+              </StackPanel>
+              <WrapPanel x:Name="ProcessActionsPanel" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
+                <TextBlock x:Name="ProcessDeviceText" Text="未连接设备" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,15,0" TextWrapping="Wrap" />
+                <Button x:Name="RefreshProcessButton" Content="刷新进程和启动来源" Click="RefreshProcessButton_Click" IsEnabled="False" Style="{StaticResource PrimaryButton}" Margin="0" />
+              </WrapPanel>
+            </Grid>
+            <views:RoundedClipBorder Grid.Row="1" Style="{StaticResource CardStyle}" Padding="0">
+              <DataGrid x:Name="ProcessGrid" AutoGenerateColumns="False" IsReadOnly="True">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                  <DataGridTextColumn Header="PPID" Binding="{Binding ParentPid}" Width="70" />
+                  <DataGridTextColumn Header="用户" Binding="{Binding User}" Width="120" />
+                  <DataGridTextColumn Header="状态" Binding="{Binding State}" Width="70" />
+                  <DataGridTextColumn Header="进程名" Binding="{Binding Name}" Width="180" />
+                  <DataGridTextColumn Header="启动参数" Binding="{Binding Arguments}" Width="*" />
+                </DataGrid.Columns>
+              </DataGrid>
+            </views:RoundedClipBorder>
+            <views:RoundedClipBorder Grid.Row="2" Style="{StaticResource CardStyle}" Padding="0" Margin="0,14,0,0">
+              <Expander Header="系统核心进程（默认折叠）" IsExpanded="False" Background="Transparent" Foreground="{DynamicResource TextBrush}" BorderThickness="0" Padding="12,10">
+                <DataGrid x:Name="CoreProcessGrid" AutoGenerateColumns="False" IsReadOnly="True" Height="180">
+                  <DataGrid.Columns>
+                    <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
+                    <DataGridTextColumn Header="用户" Binding="{Binding User}" Width="120" />
+                    <DataGridTextColumn Header="进程名" Binding="{Binding Name}" Width="180" />
+                    <DataGridTextColumn Header="启动参数" Binding="{Binding Arguments}" Width="*" />
+                  </DataGrid.Columns>
+                </DataGrid>
+              </Expander>
+            </views:RoundedClipBorder>
+          </Grid>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- 固定底部状态栏 -->
+    <StatusBar Grid.Row="2">
+      <StatusBarItem><TextBlock x:Name="StatusText" Text="就绪" /></StatusBarItem>
+      <Separator />
+      <StatusBarItem><TextBlock x:Name="EnvironmentText" Text="工具环境：检查中" Foreground="{DynamicResource MutedBrush}" /></StatusBarItem>
+    </StatusBar>
+    <Border x:Name="FirmwareDropOverlay" Grid.RowSpan="3" Visibility="Collapsed" IsHitTestVisible="False" Background="#B0101827">
+      <Border Width="330" Height="154" HorizontalAlignment="Center" VerticalAlignment="Center" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource AccentBrush}" BorderThickness="2" CornerRadius="8">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock Text="↓" FontSize="36" Foreground="{DynamicResource AccentHoverBrush}" HorizontalAlignment="Center" />
+          <TextBlock x:Name="FirmwareDropText" Text="松开以打开固件" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
+        </StackPanel>
+      </Border>
+    </Border>
+  </Grid>
+</Window>
