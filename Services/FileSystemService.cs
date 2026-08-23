@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -152,11 +153,16 @@ namespace WiFitool.Services
             var metadata = metadataService.Load(sourceRoot);
             var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var lines = new List<string>();
-            foreach (var line in File.ReadAllLines(sourcePath, Encoding.UTF8))
+            var source = File.ReadAllBytes(sourcePath);
+            var marker = Encoding.ASCII.GetBytes("# START OF DATA - DO NOT MODIFY\n");
+            var dataOffset = IndexOfBytes(source, marker);
+            var headerLength = dataOffset < 0 ? source.Length : dataOffset;
+            var header = Encoding.UTF8.GetString(source, 0, headerLength);
+            foreach (var line in header.Replace("\r\n", "\n").Split(new[] { '\n' }, StringSplitOptions.None))
             {
-                var fields = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                if (fields.Length == 0 || fields[0].StartsWith("#", StringComparison.Ordinal)) { lines.Add(line); continue; }
-                if (fields.Length < 6 || !SquashPseudoEntryExists(staging, sourceRoot, fields[0], fields[1])) continue;
+                if (line.StartsWith("#", StringComparison.Ordinal)) { lines.Add(line); continue; }
+                string[] fields;
+                if (!TryParseSquashPseudoEntry(line, out fields) || !SquashPseudoEntryExists(staging, sourceRoot, fields[0], fields[1])) continue;
                 var path = NormalizeMetadataPath(fields[0]);
                 WorkspaceMetadata entry;
                 if (metadata.TryGetValue(path, out entry)) ApplySquashMetadata(fields, entry);
@@ -174,7 +180,7 @@ namespace WiFitool.Services
                 var time = new DateTimeOffset(File.GetLastWriteTimeUtc(path)).ToUnixTimeSeconds();
                 lines.Add(item.Key + "\t" + (isDirectory ? "D" : "M") + "\t" + time + "\t" + Convert.ToString(mode, 8) + "\t" + uid + "\t" + gid);
             }
-            return WriteRepackMetadata(lines, destinationFolder, ".pseudo-");
+            return WriteRepackMetadata(lines, destinationFolder, ".pseudo-", dataOffset < 0 ? null : source.Skip(dataOffset).ToArray());
         }
 
         private string CreateRepackJffs2DevTable(string sourcePath, string sourceRoot, string staging, string destinationFolder)
@@ -262,12 +268,25 @@ namespace WiFitool.Services
             return fields.Length == 2 && int.TryParse(fields[0], out uid) && uid >= 0 && int.TryParse(fields[1], out gid) && gid >= 0;
         }
 
-        private static string WriteRepackMetadata(IEnumerable<string> lines, string destinationFolder, string prefix)
+        private static string WriteRepackMetadata(IEnumerable<string> lines, string destinationFolder, string prefix, byte[] trailingData = null)
         {
             Directory.CreateDirectory(destinationFolder);
             var path = Path.Combine(destinationFolder, prefix + Guid.NewGuid().ToString("N"));
             File.WriteAllLines(path, lines, new UTF8Encoding(false));
+            if (trailingData != null && trailingData.Length > 0) using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.None)) stream.Write(trailingData, 0, trailingData.Length);
             return path;
+        }
+
+        private static int IndexOfBytes(byte[] source, byte[] value)
+        {
+            if (source == null || value == null || value.Length == 0 || source.Length < value.Length) return -1;
+            for (var index = 0; index <= source.Length - value.Length; index++)
+            {
+                var match = true;
+                for (var offset = 0; offset < value.Length; offset++) if (source[index + offset] != value[offset]) { match = false; break; }
+                if (match) return index;
+            }
+            return -1;
         }
 
         private static string CreateStagingDirectory(string source, string parent, bool keepJffsCookies)
@@ -340,8 +359,9 @@ namespace WiFitool.Services
         {
             foreach (var line in File.ReadAllLines(pseudo))
             {
-                var fields = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries); if (fields.Length < 6 || fields[1] != "S") continue;
-                var relative = fields[0].TrimStart('/').Replace('/', Path.DirectorySeparatorChar); var target = fields[fields.Length - 1]; var path = Path.Combine(root, relative); Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) File.Delete(path); File.WriteAllBytes(path, CombineBytes(Encoding.ASCII.GetBytes("WIFITOOL_SYMLINK\n"), Encoding.UTF8.GetBytes(target))); 
+                string[] fields; string path;
+                if (!TryParseSquashPseudoEntry(line, out fields) || fields[1] != "S" || !TryGetSafeWindowsPath(root, fields[0].TrimStart('/'), out path)) continue;
+                var target = fields[fields.Length - 1]; Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) File.Delete(path); File.WriteAllBytes(path, CombineBytes(Encoding.ASCII.GetBytes("WIFITOOL_SYMLINK\n"), Encoding.UTF8.GetBytes(target)));
             }
         }
 
@@ -350,8 +370,9 @@ namespace WiFitool.Services
             var entries = new Dictionary<string, WorkspaceMetadata>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in File.ReadAllLines(pseudo))
             {
-                var fields = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries); if (fields.Length < 6 || fields[0].StartsWith("#", StringComparison.Ordinal)) continue;
-                int mode; if (!TryParseOctal(fields[3], out mode)) continue;
+                string[] fields;
+                if (!TryParseSquashPseudoEntry(line, out fields)) continue;
+                int mode; TryParseOctal(fields[3], out mode);
                 var kind = fields[1] == "D" ? "directory" : fields[1] == "S" ? "symlink" : fields[1] == "C" ? "device" : "file";
                 entries[NormalizeMetadataPath(fields[0])] = new WorkspaceMetadata { Kind = kind, Mode = mode, Owner = fields[4] + ":" + fields[5], Target = fields[1] == "S" ? fields[fields.Length - 1] : "", Modified = fields[2] };
             }
@@ -372,6 +393,15 @@ namespace WiFitool.Services
 
         private static string NormalizeMetadataPath(string value) { if (string.IsNullOrWhiteSpace(value) || value == "/") return "/"; return "/" + value.Trim('/').Replace('\\', '/'); }
         private static bool TryParseOctal(string value, out int number) { number = 0; if (string.IsNullOrWhiteSpace(value)) return false; foreach (var c in value) { if (c < '0' || c > '7') return false; number = number * 8 + c - '0'; } return true; }
+        private static bool TryParseSquashPseudoEntry(string line, out string[] fields)
+        {
+            fields = (line ?? "").Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 6 || (fields[0] != "/" && fields[0].IndexOfAny(new[] { '\r', '\n', '\0' }) >= 0)) return false;
+            if (fields[1] != "D" && fields[1] != "R" && fields[1] != "S" && fields[1] != "B" && fields[1] != "C" && fields[1] != "I") return false;
+            long timestamp; int mode; int uid; int gid;
+            if (!long.TryParse(fields[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out timestamp) || !TryParseOctal(fields[3], out mode) || !int.TryParse(fields[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out uid) || !int.TryParse(fields[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out gid) || uid < 0 || gid < 0) return false;
+            return fields[1] != "S" || fields.Length >= 7;
+        }
 
         private static void CreateJffs2SymlinkCookies(string imagePath, string root, bool littleEndian)
         {
