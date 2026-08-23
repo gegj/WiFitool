@@ -9,14 +9,14 @@ namespace WiFitool
     // 统一替代系统 MessageBox，保持现有调用的返回值行为。
     internal static class MessageBox
     {
-        public static MessageBoxResult Show(Window owner, string message, string caption, MessageBoxButton buttons, MessageBoxImage image)
+        public static MessageBoxResult Show(Window owner, string message, string caption, MessageBoxButton buttons, MessageBoxImage image, double width = 470)
         {
             var result = MessageBoxResult.None;
             var window = new Window
             {
                 Title = caption,
-                Width = 470,
-                MinWidth = 390,
+                Width = width,
+                MinWidth = Math.Min(390, width),
                 MaxHeight = 560,
                 SizeToContent = SizeToContent.Height,
                 WindowStyle = WindowStyle.None,

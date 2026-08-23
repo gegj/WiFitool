@@ -20,6 +20,7 @@ namespace WiFitool
 {
     public partial class MainWindow : Window
     {
+        private const double UpdateDialogWidth = 390;
         private readonly FirmwareAnalyzer analyzer = new FirmwareAnalyzer();
         private readonly WorkspaceService workspaceService = new WorkspaceService();
         private readonly WorkspaceFileService fileService = new WorkspaceFileService();
@@ -155,7 +156,7 @@ namespace WiFitool
             if (updateChecking) return;
             if (activeCancellation != null)
             {
-                if (userInitiated) MessageBox.Show(this, "请等待当前操作完成后再检查更新。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                if (userInitiated) MessageBox.Show(this, "请等待当前操作完成后再检查更新。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information, UpdateDialogWidth);
                 return;
             }
 
@@ -169,18 +170,18 @@ namespace WiFitool
                 if (!string.IsNullOrEmpty(result.Error))
                 {
                     StatusText.Text = "更新检查失败";
-                    if (userInitiated) MessageBox.Show(this, result.Error, "检查更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                    if (userInitiated) MessageBox.Show(this, result.Error, "检查更新失败", MessageBoxButton.OK, MessageBoxImage.Error, UpdateDialogWidth);
                     return;
                 }
                 if (!result.HasUpdate)
                 {
                     StatusText.Text = "当前已是最新版本";
-                    if (userInitiated) MessageBox.Show(this, "当前已是最新版本。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                    if (userInitiated) MessageBox.Show(this, "当前已是最新版本。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information, UpdateDialogWidth);
                     return;
                 }
 
                 var message = "检测到新版本 v" + result.Update.Version + "\n当前版本 v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3) + "\n\n是否立即下载并安装？";
-                if (MessageBox.Show(this, message, "发现新版本", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
+                if (MessageBox.Show(this, message, "发现新版本", MessageBoxButton.YesNo, MessageBoxImage.Information, UpdateDialogWidth) != MessageBoxResult.Yes)
                 {
                     StatusText.Text = "已发现新版本 v" + result.Update.Version;
                     return;
@@ -196,7 +197,7 @@ namespace WiFitool
             catch (Exception ex)
             {
                 StatusText.Text = "更新失败";
-                MessageBox.Show(this, ex.Message, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, ex.Message, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error, UpdateDialogWidth);
             }
             finally
             {
