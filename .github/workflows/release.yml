@@ -1,0 +1,42 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Verify tag version
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content -Raw -Encoding UTF8 WiFitool.csproj
+          $manager = New-Object System.Xml.XmlNamespaceManager($project.NameTable)
+          $manager.AddNamespace('msb', 'http://schemas.microsoft.com/developer/msbuild/2003')
+          $version = $project.SelectSingleNode('//msb:Version', $manager).InnerText
+          if ("v$version" -ne '${{ github.ref_name }}') {
+            throw "标签 ${{ github.ref_name }} 与项目版本 v$version 不一致。"
+          }
+
+      - name: Build
+        shell: pwsh
+        run: msbuild WiFitool.csproj /t:Rebuild /p:Configuration=Release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WiFitool ${{ github.ref_name }}
+          generate_release_notes: true
+          files: bin/Release/WiFitool.exe
