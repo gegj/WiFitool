@@ -211,8 +211,18 @@
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="0" /></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <WrapPanel x:Name="FileSourcePanel" Grid.Column="0" VerticalAlignment="Center">
-                  <Button x:Name="LocalSourceButton" Content="本地固件" Click="LocalSourceButton_Click" Style="{StaticResource CompactButton}" Background="{DynamicResource AccentBrush}" Foreground="#FFFFFF" />
-                  <Button x:Name="AdbSourceButton" Content="ADB 设备固件" Click="AdbSourceButton_Click" Style="{StaticResource CompactButton}" Background="{DynamicResource PanelAltBrush}" />
+                  <Button x:Name="LocalSourceButton" Click="LocalSourceButton_Click" Style="{StaticResource CompactButton}" Background="{DynamicResource AccentBrush}" Foreground="#FFFFFF" ToolTip="浏览本地固件文件">
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="▣" FontSize="15" Width="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      <TextBlock Text="本地固件文件" VerticalAlignment="Center" />
+                    </StackPanel>
+                  </Button>
+                  <Button x:Name="AdbSourceButton" Click="AdbSourceButton_Click" Style="{StaticResource CompactButton}" Background="{DynamicResource PanelAltBrush}" ToolTip="浏览 ADB 设备固件文件">
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="▤" FontSize="15" Width="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      <TextBlock Text="ADB设备固件文件" VerticalAlignment="Center" />
+                    </StackPanel>
+                  </Button>
                   <Button x:Name="NavigateUpButton" Content="↑ 上级目录" Click="NavigateUpButton_Click" Style="{StaticResource CompactButton}" IsEnabled="False" Margin="6,0,0,0" Padding="10,4" ToolTip="返回上级目录" />
                 </WrapPanel>
                 <ScrollViewer x:Name="BreadcrumbScrollViewer" Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center" Margin="10,0,0,0">
