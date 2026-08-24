@@ -51,14 +51,13 @@ namespace WiFitool.Services
                         TryDeleteDirectory(destination);
                         throw new InvalidDataException("JFFS2 分区解包失败：" + jffsOutput.Trim());
                     }
-                    CreateJffs2SymlinkCookies(imagePath, destination, partition.LittleEndian);
                     var devtable = Path.Combine(session.RootPath, "metadata", SafeName(partition.Name) + ".devtable");
                     CreateJffs2DevTable(imagePath, devtable, destination, partition.LittleEndian);
                     if (File.Exists(devtable)) { session.MetadataFiles[partition.Name] = devtable; CreateDevMetadata(destination, devtable); }
                 }
                 else throw new InvalidOperationException("分区文件系统不支持解包：" + partition.FileSystem);
                 if ((result.ExitCode != 0 && result.ExitCode != 2) || !Directory.Exists(destination)) throw new InvalidDataException("分区解包失败：" + result.StandardError);
-                if (partition.FileSystem == "SquashFS") { CreateSymlinkCookies(destination, session.MetadataFiles[partition.Name]); CreateSquashMetadata(destination, session.MetadataFiles[partition.Name]); }
+                if (partition.FileSystem == "SquashFS") CreateSquashMetadata(destination, session.MetadataFiles[partition.Name]);
                 session.ExtractedDirectories[partition.Name] = destination;
                 partition.Extracted = true;
             }, token);
@@ -162,10 +161,11 @@ namespace WiFitool.Services
             {
                 if (line.StartsWith("#", StringComparison.Ordinal)) { lines.Add(line); continue; }
                 string[] fields;
-                if (!TryParseSquashPseudoEntry(line, out fields) || !SquashPseudoEntryExists(staging, sourceRoot, fields[0], fields[1])) continue;
+                if (!TryParseSquashPseudoEntry(line, out fields) || !SquashPseudoEntryExists(staging, sourceRoot, metadata, fields[0], fields[1])) continue;
                 var path = NormalizeMetadataPath(fields[0]);
-                WorkspaceMetadata entry;
+                WorkspaceMetadata entry = null;
                 if (metadata.TryGetValue(path, out entry)) ApplySquashMetadata(fields, entry);
+                if (entry != null && entry.Kind == "symlink" && !string.IsNullOrWhiteSpace(entry.Target)) fields[fields.Length - 1] = entry.Target;
                 existing.Add(path);
                 lines.Add(string.Join("\t", fields));
             }
@@ -192,7 +192,7 @@ namespace WiFitool.Services
             {
                 var fields = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
                 if (fields.Length < 5) continue;
-                if (!Jffs2DevTableEntryExists(staging, fields[0], fields[1])) continue;
+                if (!Jffs2DevTableEntryExists(staging, metadata, fields[0], fields[1])) continue;
                 var path = NormalizeMetadataPath(fields[0]);
                 WorkspaceMetadata entry;
                 if (metadata.TryGetValue(path, out entry)) ApplyJffs2Metadata(fields, entry);
@@ -211,23 +211,34 @@ namespace WiFitool.Services
             return WriteRepackMetadata(lines, destinationFolder, ".devtable-");
         }
 
-        private static bool Jffs2DevTableEntryExists(string root, string entryPath, string kind)
+        private static bool Jffs2DevTableEntryExists(string root, Dictionary<string, WorkspaceMetadata> metadata, string entryPath, string kind)
         {
             string path;
             if (!TryGetStagingPath(root, entryPath, out path)) return false;
             if (string.Equals(path, root, StringComparison.OrdinalIgnoreCase)) return true;
             if (kind == "d") return Directory.Exists(path);
+            if (kind == "l")
+            {
+                WorkspaceMetadata entry;
+                if (metadata.TryGetValue(NormalizeMetadataPath(entryPath), out entry) && entry != null && entry.Kind == "symlink") return true;
+            }
             if (kind == "f" || kind == "l") return File.Exists(path);
             return Directory.Exists(Path.GetDirectoryName(path));
         }
 
-        private static bool SquashPseudoEntryExists(string root, string sourceRoot, string entryPath, string kind)
+        private static bool SquashPseudoEntryExists(string root, string sourceRoot, Dictionary<string, WorkspaceMetadata> metadata, string entryPath, string kind)
         {
             string path;
             if (!TryGetStagingPath(root, entryPath, out path)) return false;
             if (string.Equals(path, root, StringComparison.OrdinalIgnoreCase)) return true;
             if (kind == "D") return Directory.Exists(path);
-            if (kind == "S") { string cookie; return TryGetStagingPath(sourceRoot, entryPath, out cookie) && File.Exists(cookie); }
+            if (kind == "S")
+            {
+                WorkspaceMetadata entry;
+                if (metadata.TryGetValue(NormalizeMetadataPath(entryPath), out entry) && entry != null && entry.Kind == "symlink") return true;
+                string cookie;
+                return TryGetStagingPath(sourceRoot, entryPath, out cookie) && File.Exists(cookie);
+            }
             if (kind == "B" || kind == "C" || kind == "I") return Directory.Exists(Path.GetDirectoryName(path));
             return File.Exists(path);
         }
@@ -251,6 +262,10 @@ namespace WiFitool.Services
             fields[2] = Convert.ToString(GetMode(entry, Convert.ToInt32("644", 8)), 8);
             int uid, gid;
             if (TryGetOwner(entry, out uid, out gid)) { fields[3] = uid.ToString(); fields[4] = gid.ToString(); }
+            if (entry != null && entry.Kind == "symlink" && !string.IsNullOrWhiteSpace(entry.Target))
+            {
+                fields[fields.Length - 1] = entry.Target;
+            }
         }
 
         private static int GetMode(WorkspaceMetadata entry, int fallback) { return entry != null && entry.Mode > 0 ? entry.Mode & 0xFFF : fallback; }
@@ -355,16 +370,6 @@ namespace WiFitool.Services
             try { var bytes = File.ReadAllBytes(path); var marker = Encoding.ASCII.GetBytes("!<symlink>"); return bytes.Length >= marker.Length && marker.SequenceEqual(bytes.Take(marker.Length)); } catch { return false; }
         }
 
-        private static void CreateSymlinkCookies(string root, string pseudo)
-        {
-            foreach (var line in File.ReadAllLines(pseudo))
-            {
-                string[] fields; string path;
-                if (!TryParseSquashPseudoEntry(line, out fields) || fields[1] != "S" || !TryGetSafeWindowsPath(root, fields[0].TrimStart('/'), out path)) continue;
-                var target = fields[fields.Length - 1]; Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) File.Delete(path); File.WriteAllBytes(path, CombineBytes(Encoding.ASCII.GetBytes("WIFITOOL_SYMLINK\n"), Encoding.UTF8.GetBytes(target)));
-            }
-        }
-
         private void CreateSquashMetadata(string root, string pseudo)
         {
             var entries = new Dictionary<string, WorkspaceMetadata>(StringComparer.OrdinalIgnoreCase);
@@ -386,7 +391,9 @@ namespace WiFitool.Services
             {
                 var fields = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries); if (fields.Length < 5) continue;
                 int mode; if (!TryParseOctal(fields[2], out mode)) continue;
-                entries[NormalizeMetadataPath(fields[0])] = new WorkspaceMetadata { Kind = fields[1] == "d" ? "directory" : fields[1] == "l" ? "symlink" : "file", Mode = mode, Owner = fields[3] + ":" + fields[4], Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
+                var kind = fields[1] == "d" ? "directory" : fields[1] == "l" ? "symlink" : "file";
+                var target = kind == "symlink" && fields.Length > 5 && fields[fields.Length - 1] != "-" ? fields[fields.Length - 1] : "";
+                entries[NormalizeMetadataPath(fields[0])] = new WorkspaceMetadata { Kind = kind, Mode = mode, Owner = fields[3] + ":" + fields[4], Target = target, Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
             }
             metadataService.Save(root, entries);
         }
@@ -403,34 +410,6 @@ namespace WiFitool.Services
             return fields[1] != "S" || fields.Length >= 7;
         }
 
-        private static void CreateJffs2SymlinkCookies(string imagePath, string root, bool littleEndian)
-        {
-            var bytes = File.ReadAllBytes(imagePath); var inodes = new Dictionary<uint, JffsInode>(); var links = new Dictionary<string, JffsDirent>();
-            for (var offset = 0; offset + 40 <= bytes.Length; offset += 4)
-            {
-                if (Read16(bytes, offset, littleEndian) != 0x1985) continue; var type = Read16(bytes, offset + 2, littleEndian); var total = Read32(bytes, offset + 4, littleEndian); if (total < 40 || offset + total > bytes.Length) continue;
-                if (type == 0xE002 && total >= 68)
-                {
-                    var inode = Read32(bytes, offset + 12, littleEndian); var mode = Read32(bytes, offset + 20, littleEndian); var dataSize = Read32(bytes, offset + 52, littleEndian); if ((mode & 0xF000) == 0xA000 && dataSize > 0 && offset + 68 + dataSize <= bytes.Length) inodes[inode] = new JffsInode(inode, mode, Encoding.ASCII.GetString(bytes, offset + 68, (int)dataSize).TrimEnd('\0'));
-                }
-                else if (type == 0xE001 && total >= 40)
-                {
-                    var parent = Read32(bytes, offset + 12, littleEndian); var version = Read32(bytes, offset + 16, littleEndian); var inode = Read32(bytes, offset + 20, littleEndian); var nameSize = bytes[offset + 28]; if (offset + 40 + nameSize <= bytes.Length) { var name = Encoding.UTF8.GetString(bytes, offset + 40, nameSize); var key = parent + "|" + name; if (!links.ContainsKey(key) || links[key].Version < version) links[key] = new JffsDirent(parent, inode, name, version); }
-                }
-                offset += (int)((total + 3) & ~3) - 4;
-            }
-            foreach (var inode in inodes.Values)
-            {
-                var path = FindJffsPath(inode.Number, links, new HashSet<uint>()); string target;
-                if (path == null || !TryGetSafeWindowsPath(root, path, out target)) continue;
-                var parent = Path.GetDirectoryName(target);
-                if (!Directory.Exists(parent) || File.Exists(target) || Directory.Exists(target)) continue;
-                File.WriteAllBytes(target, CombineBytes(Encoding.ASCII.GetBytes("!<symlink>"), CombineBytes(Encoding.UTF8.GetBytes(inode.Target), new byte[] { 0 })));
-            }
-        }
-
-        private static byte[] CombineBytes(byte[] first, byte[] second) { var result = new byte[first.Length + second.Length]; Buffer.BlockCopy(first, 0, result, 0, first.Length); Buffer.BlockCopy(second, 0, result, first.Length, second.Length); return result; }
-
         private static void CreateJffs2DevTable(string imagePath, string outputPath, string root, bool littleEndian)
         {
             var bytes = File.ReadAllBytes(imagePath);
@@ -441,7 +420,7 @@ namespace WiFitool.Services
                 if (Read16(bytes, offset, littleEndian) != 0x1985) continue;
                 var type = Read16(bytes, offset + 2, littleEndian); var total = Read32(bytes, offset + 4, littleEndian);
                 if (total < 40 || offset + total > bytes.Length) continue;
-                if (type == 0xE001)
+                if ((type & 0x3FFF) == 0x0001)
                 {
                     var parent = Read32(bytes, offset + 12, littleEndian); var version = Read32(bytes, offset + 16, littleEndian); var inode = Read32(bytes, offset + 20, littleEndian); var nameSize = bytes[offset + 28];
                     if (offset + 40 + nameSize <= bytes.Length)
@@ -450,10 +429,12 @@ namespace WiFitool.Services
                         JffsDirent previous; if (!dirents.TryGetValue(key, out previous) || previous.Version < version) dirents[key] = new JffsDirent(parent, inode, name, version);
                     }
                 }
-                else if (type == 0xE002 && total >= 68)
+                else if ((type & 0x3FFF) == 0x0002 && total >= 68)
                 {
                     var inode = Read32(bytes, offset + 12, littleEndian); var version = Read32(bytes, offset + 16, littleEndian); var mode = Read32(bytes, offset + 20, littleEndian); var uid = Read16(bytes, offset + 24, littleEndian); var gid = Read16(bytes, offset + 26, littleEndian);
-                    JffsInodeMeta previous; if (!inodes.TryGetValue(inode, out previous) || previous.Version < version) inodes[inode] = new JffsInodeMeta(inode, version, mode, uid, gid);
+                    var dataSize = Read32(bytes, offset + 52, littleEndian); var target = "";
+                    if ((mode & 0xF000) == 0xA000 && dataSize > 0 && offset + 68 + dataSize <= bytes.Length) target = Encoding.UTF8.GetString(bytes, offset + 68, (int)dataSize).TrimEnd('\0');
+                    JffsInodeMeta previous; if (!inodes.TryGetValue(inode, out previous) || previous.Version < version) inodes[inode] = new JffsInodeMeta(inode, version, mode, uid, gid, target);
                 }
                 offset += (int)((total + 3) & ~3) - 4;
             }
@@ -464,7 +445,7 @@ namespace WiFitool.Services
                 if (string.IsNullOrEmpty(path) || !TryGetSafeWindowsPath(root, path, out localPath)) continue;
                 var fileType = inode.Mode & 0xF000; var kind = fileType == 0x4000 ? 'd' : fileType == 0xA000 ? 'l' : fileType == 0x2000 ? 'c' : fileType == 0x6000 ? 'b' : fileType == 0x1000 ? 'p' : 'f';
                 var mode = Convert.ToString((int)(inode.Mode & 0xFFF), 8);
-                lines.Add("/" + path + "\t" + kind + "\t" + mode + "\t" + inode.Uid + "\t" + inode.Gid + "\t-\t-\t-\t-\t-");
+                lines.Add("/" + path + "\t" + kind + "\t" + mode + "\t" + inode.Uid + "\t" + inode.Gid + "\t-\t-\t-\t-\t" + (kind == 'l' && !string.IsNullOrWhiteSpace(inode.Target) ? inode.Target : "-"));
             }
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath)); File.WriteAllLines(outputPath, lines, new UTF8Encoding(false));
         }
@@ -501,8 +482,7 @@ namespace WiFitool.Services
         }
         private static ushort Read16(byte[] b, int o, bool little) { return little ? (ushort)(b[o] | b[o + 1] << 8) : (ushort)(b[o] << 8 | b[o + 1]); }
         private static uint Read32(byte[] b, int o, bool little) { return little ? (uint)(b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) : (uint)(b[o] << 24 | b[o + 1] << 16 | b[o + 2] << 8 | b[o + 3]); }
-        private sealed class JffsInode { public uint Number; public uint Mode; public string Target; public JffsInode(uint number, uint mode, string target) { Number = number; Mode = mode; Target = target; } }
-        private sealed class JffsInodeMeta { public uint Number; public uint Version; public uint Mode; public ushort Uid; public ushort Gid; public JffsInodeMeta(uint number, uint version, uint mode, ushort uid, ushort gid) { Number = number; Version = version; Mode = mode; Uid = uid; Gid = gid; } }
+        private sealed class JffsInodeMeta { public uint Number; public uint Version; public uint Mode; public ushort Uid; public ushort Gid; public string Target; public JffsInodeMeta(uint number, uint version, uint mode, ushort uid, ushort gid, string target) { Number = number; Version = version; Mode = mode; Uid = uid; Gid = gid; Target = target; } }
         private sealed class JffsDirent { public uint Parent; public uint Inode; public string Name; public uint Version; public JffsDirent(uint parent, uint inode, string name, uint version) { Parent = parent; Inode = inode; Name = name; Version = version; } }
     }
 }

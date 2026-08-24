@@ -732,7 +732,7 @@ namespace WiFitool
         private ContextMenu CreateFileMenu()
         {
             var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var upload = new MenuItem { Header = "上传覆盖" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
-            edit.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && entry.Kind != "目录") { if (adbMode) await EditAdbFileAsync(entry); else FileGrid_MouseDoubleClick(null, null); } };
+            edit.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && entry.Kind != "目录" && entry.Kind != "符号链接") { if (adbMode) await EditAdbFileAsync(entry); else FileGrid_MouseDoubleClick(null, null); } };
             permissions.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null || entry.Kind == "符号链接") return; var dialog = new PermissionWindow(entry); dialog.Owner = this; if (adbMode) { if (dialog.ShowDialog() == true) { try { await RunTaskProgressAsync(async () => { await adbService.SetModeAsync(adbSerial, entry.Path, dialog.Mode, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "权限", MessageBoxButton.OK, MessageBoxImage.Error); } } } else if (dialog.ShowDialog() == true) { try { await RunTaskProgressAsync(() => Task.Run(() => fileService.SetPermissions(currentRoot, entry.Path, dialog.Mode, dialog.OwnerValue))); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "权限", MessageBoxButton.OK, MessageBoxImage.Error); } } };
             upload.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null || entry.Kind == "目录" || entry.Kind == "符号链接") return; var dialog = new OpenFileDialog { Title = "选择要覆盖的文件" }; if (dialog.ShowDialog() != true) return; if (MessageBox.Show(this, "确认覆盖文件：" + entry.Path + "？", "确认上传", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) await UploadNamedFileAsync(dialog.FileName, ParentVirtualPath(entry.Path), entry.Name, true); };
             uploadNew.Click += async delegate { var directory = GetUploadDirectory(); var dialog = new OpenFileDialog { Title = "选择要上传的文件" }; if (dialog.ShowDialog() == true) await UploadSourcesAsync(new[] { dialog.FileName }, directory); };
@@ -816,6 +816,7 @@ namespace WiFitool
         private async Task DownloadEntryAsync(WorkspaceEntry entry)
         {
             if (entry == null) return;
+            if (!adbMode && entry.Kind == "符号链接") { MessageBox.Show(this, "工作区符号链接仅保存在元数据中，不能作为普通文件下载。", "下载提示", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             if (entry.Kind != "目录")
             {
                 var dialog = new SaveFileDialog { Title = "保存文件", FileName = entry.Name };
