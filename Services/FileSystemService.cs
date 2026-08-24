@@ -52,8 +52,8 @@ namespace WiFitool.Services
                         throw new InvalidDataException("JFFS2 分区解包失败：" + jffsOutput.Trim());
                     }
                     var devtable = Path.Combine(session.RootPath, "metadata", SafeName(partition.Name) + ".devtable");
-                    CreateJffs2DevTable(imagePath, devtable, destination, partition.LittleEndian);
-                    if (File.Exists(devtable)) { session.MetadataFiles[partition.Name] = devtable; CreateDevMetadata(destination, devtable); }
+                    var symlinkTargets = CreateJffs2DevTable(imagePath, devtable, destination, partition.LittleEndian);
+                    if (File.Exists(devtable)) { session.MetadataFiles[partition.Name] = devtable; CreateDevMetadata(destination, devtable, symlinkTargets); }
                 }
                 else throw new InvalidOperationException("分区文件系统不支持解包：" + partition.FileSystem);
                 if ((result.ExitCode != 0 && result.ExitCode != 2) || !Directory.Exists(destination)) throw new InvalidDataException("分区解包失败：" + result.StandardError);
@@ -74,7 +74,7 @@ namespace WiFitool.Services
                 if (partition.FileSystem == "SquashFS")
                 {
                     var tool = Path.Combine(toolsRoot, "squashfs", "mksquashfs.exe");
-                    var staging = CreateStagingDirectory(source, Path.Combine(session.RootPath, "repacked"), false);
+                    var staging = CreateStagingDirectory(source, Path.Combine(session.RootPath, "repacked"), null);
                     var args = new List<string> { staging, target, "-noappend", "-processors", "1" };
                     if (partition.BlockSize > 0) { args.Add("-b"); args.Add(partition.BlockSize.ToString()); }
                     if (!string.IsNullOrWhiteSpace(partition.Compression) && partition.Compression != "--" && !partition.Compression.StartsWith("未知")) { args.Add("-comp"); args.Add(partition.Compression); }
@@ -91,7 +91,7 @@ namespace WiFitool.Services
                 else if (partition.FileSystem == "JFFS2")
                 {
                     var tool = Path.Combine(toolsRoot, "mtd-utils", "mkfs.jffs2.exe");
-                    var staging = CreateStagingDirectory(source, Path.Combine(session.RootPath, "repacked"), true);
+                    var staging = CreateStagingDirectory(source, Path.Combine(session.RootPath, "repacked"), metadataService.Load(source));
                     var args = new List<string> { "-r", staging, "-o", target, partition.LittleEndian ? "-l" : "-b", "-e", "0x" + InferEraseBlock(partition).ToString("X"), "-s", "0x" + InferPageSize(partition).ToString("X") };
                     string devtable, repackDevtable = null;
                     try
@@ -262,10 +262,6 @@ namespace WiFitool.Services
             fields[2] = Convert.ToString(GetMode(entry, Convert.ToInt32("644", 8)), 8);
             int uid, gid;
             if (TryGetOwner(entry, out uid, out gid)) { fields[3] = uid.ToString(); fields[4] = gid.ToString(); }
-            if (entry != null && entry.Kind == "symlink" && !string.IsNullOrWhiteSpace(entry.Target))
-            {
-                fields[fields.Length - 1] = entry.Target;
-            }
         }
 
         private static int GetMode(WorkspaceMetadata entry, int fallback) { return entry != null && entry.Mode > 0 ? entry.Mode & 0xFFF : fallback; }
@@ -304,19 +300,20 @@ namespace WiFitool.Services
             return -1;
         }
 
-        private static string CreateStagingDirectory(string source, string parent, bool keepJffsCookies)
+        private static string CreateStagingDirectory(string source, string parent, Dictionary<string, WorkspaceMetadata> symlinks)
         {
             var staging = Path.Combine(parent, ".staging-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(staging);
             try
             {
-                CopyWithoutCookies(source, staging, keepJffsCookies);
+                CopyWithoutCookies(source, staging, symlinks != null);
+                if (symlinks != null) CreateStagingSymlinks(staging, symlinks);
                 return staging;
             }
             catch { DeleteStagingDirectory(staging); throw; }
         }
 
-        private static void CopyWithoutCookies(string source, string destination, bool keepJffsCookies)
+        private static void CopyWithoutCookies(string source, string destination, bool keepLegacyJffsCookies)
         {
             foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
             {
@@ -326,12 +323,27 @@ namespace WiFitool.Services
             foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
             {
                 string target;
-                if (Path.GetFileName(file).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase) || (!keepJffsCookies && IsCookie(file, out target))) continue;
+                if (Path.GetFileName(file).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsCookie(file, out target) && (!keepLegacyJffsCookies || !IsJffsCookie(file))) continue;
                 var relative = file.Substring(source.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 var destinationFile = Path.Combine(destination, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(destinationFile));
                 File.Copy(file, destinationFile, true);
-                if (keepJffsCookies && IsJffsCookie(file)) try { File.SetAttributes(destinationFile, FileAttributes.System); } catch { }
+                if (keepLegacyJffsCookies && IsJffsCookie(file)) try { File.SetAttributes(destinationFile, FileAttributes.System); } catch { }
+            }
+        }
+
+        private static void CreateStagingSymlinks(string root, Dictionary<string, WorkspaceMetadata> metadata)
+        {
+            foreach (var item in metadata)
+            {
+                if (item.Value == null || item.Value.Kind != "symlink" || string.IsNullOrWhiteSpace(item.Value.Target)) continue;
+                string path;
+                if (!TryGetStagingPath(root, item.Key, out path)) continue;
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                if (File.Exists(path)) File.Delete(path);
+                File.WriteAllBytes(path, CombineBytes(Encoding.ASCII.GetBytes("!<symlink>"), CombineBytes(Encoding.UTF8.GetBytes(item.Value.Target), new byte[] { 0 })));
+                try { File.SetAttributes(path, FileAttributes.System); } catch { }
             }
         }
 
@@ -370,6 +382,8 @@ namespace WiFitool.Services
             try { var bytes = File.ReadAllBytes(path); var marker = Encoding.ASCII.GetBytes("!<symlink>"); return bytes.Length >= marker.Length && marker.SequenceEqual(bytes.Take(marker.Length)); } catch { return false; }
         }
 
+        private static byte[] CombineBytes(byte[] first, byte[] second) { var result = new byte[first.Length + second.Length]; Buffer.BlockCopy(first, 0, result, 0, first.Length); Buffer.BlockCopy(second, 0, result, first.Length, second.Length); return result; }
+
         private void CreateSquashMetadata(string root, string pseudo)
         {
             var entries = new Dictionary<string, WorkspaceMetadata>(StringComparer.OrdinalIgnoreCase);
@@ -384,7 +398,7 @@ namespace WiFitool.Services
             metadataService.Save(root, entries);
         }
 
-        private void CreateDevMetadata(string root, string devtable)
+        private void CreateDevMetadata(string root, string devtable, Dictionary<string, string> symlinkTargets)
         {
             var entries = new Dictionary<string, WorkspaceMetadata>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in File.ReadAllLines(devtable))
@@ -392,7 +406,8 @@ namespace WiFitool.Services
                 var fields = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries); if (fields.Length < 5) continue;
                 int mode; if (!TryParseOctal(fields[2], out mode)) continue;
                 var kind = fields[1] == "d" ? "directory" : fields[1] == "l" ? "symlink" : "file";
-                var target = kind == "symlink" && fields.Length > 5 && fields[fields.Length - 1] != "-" ? fields[fields.Length - 1] : "";
+                string target;
+                symlinkTargets.TryGetValue(NormalizeMetadataPath(fields[0]), out target);
                 entries[NormalizeMetadataPath(fields[0])] = new WorkspaceMetadata { Kind = kind, Mode = mode, Owner = fields[3] + ":" + fields[4], Target = target, Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
             }
             metadataService.Save(root, entries);
@@ -410,7 +425,7 @@ namespace WiFitool.Services
             return fields[1] != "S" || fields.Length >= 7;
         }
 
-        private static void CreateJffs2DevTable(string imagePath, string outputPath, string root, bool littleEndian)
+        private static Dictionary<string, string> CreateJffs2DevTable(string imagePath, string outputPath, string root, bool littleEndian)
         {
             var bytes = File.ReadAllBytes(imagePath);
             var dirents = new Dictionary<string, JffsDirent>();
@@ -439,15 +454,19 @@ namespace WiFitool.Services
                 offset += (int)((total + 3) & ~3) - 4;
             }
             var lines = new List<string> { "/.\td\t755\t0\t0\t-\t-\t-\t-\t-" };
+            var symlinkTargets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var inode in inodes.Values.OrderBy(x => x.Number))
             {
                 var path = FindJffsPath(inode.Number, dirents, new HashSet<uint>()); string localPath;
                 if (string.IsNullOrEmpty(path) || !TryGetSafeWindowsPath(root, path, out localPath)) continue;
                 var fileType = inode.Mode & 0xF000; var kind = fileType == 0x4000 ? 'd' : fileType == 0xA000 ? 'l' : fileType == 0x2000 ? 'c' : fileType == 0x6000 ? 'b' : fileType == 0x1000 ? 'p' : 'f';
                 var mode = Convert.ToString((int)(inode.Mode & 0xFFF), 8);
-                lines.Add("/" + path + "\t" + kind + "\t" + mode + "\t" + inode.Uid + "\t" + inode.Gid + "\t-\t-\t-\t-\t" + (kind == 'l' && !string.IsNullOrWhiteSpace(inode.Target) ? inode.Target : "-"));
+                var metadataPath = "/" + path;
+                if (kind == 'l' && !string.IsNullOrWhiteSpace(inode.Target)) symlinkTargets[metadataPath] = inode.Target;
+                lines.Add(metadataPath + "\t" + kind + "\t" + mode + "\t" + inode.Uid + "\t" + inode.Gid + "\t-\t-\t-\t\t-");
             }
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath)); File.WriteAllLines(outputPath, lines, new UTF8Encoding(false));
+            return symlinkTargets;
         }
 
         private static bool TryGetSafeWindowsPath(string root, string relative, out string path)

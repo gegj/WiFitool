@@ -18,8 +18,7 @@ namespace WiFitool.Services
             return Task.Run(delegate
             {
                 Directory.CreateDirectory(Workspaces);
-                var safe = SafeName(Path.GetFileNameWithoutExtension(image.Name));
-                var path = Path.Combine(Workspaces, safe + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
+                var path = Path.Combine(Workspaces, "w-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
                 Directory.CreateDirectory(path);
                 var session = new WorkspaceSession { RootPath = path, OriginalImagePath = image.Path };
                 try
