@@ -4,5 +4,4 @@ obj/
 *.user
 *.suo
 *.pdb
-luac.out
-NUL
+WiFitool.exe

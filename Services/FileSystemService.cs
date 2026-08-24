@@ -19,7 +19,7 @@ namespace WiFitool.Services
         public FileSystemService(ToolRunner runner)
         {
             this.runner = runner;
-            toolsRoot = Path.Combine(Path.GetDirectoryName(typeof(FileSystemService).Assembly.Location), "tools");
+            toolsRoot = ToolEnvironment.Root;
         }
 
         public Task ExtractAsync(PartitionInfo partition, WorkspaceSession session, CancellationToken token, Action<string, bool> output)

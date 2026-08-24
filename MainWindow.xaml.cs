@@ -51,6 +51,7 @@ namespace WiFitool
         private bool compactSidebar;
         private bool compactContentMargin;
         private bool updateChecking;
+        private bool toolEnvironmentChecking;
         private bool includeEmptyDirectories;
         private int activeTaskCount;
 
@@ -64,10 +65,8 @@ namespace WiFitool
             adbTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             adbTimer.Tick += async delegate { await CheckAdbStatusAsync(); };
             FileGrid.ItemsSource = files;
-            var baseTools = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tools"); var ready = File.Exists(Path.Combine(baseTools, "adb", "adb.exe")) && File.Exists(Path.Combine(baseTools, "squashfs", "unsquashfs.exe")) && File.Exists(Path.Combine(baseTools, "squashfs", "mksquashfs.exe")) && File.Exists(Path.Combine(baseTools, "mtd-utils", "mkfs.jffs2.exe")) && File.Exists(Path.Combine(baseTools, "jefferson", "jefferson.exe"));
-            EnvironmentText.Text = ready ? "工具环境：正常" : "工具环境：缺少工具";
             SizeChanged += MainWindow_SizeChanged;
-            Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
+            Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
             Closing += delegate { adbTimer.Stop(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); };
             ProcessGrid.ContextMenu = CreateProcessMenu(false);
             CoreProcessGrid.ContextMenu = CreateProcessMenu(true);
@@ -212,6 +211,37 @@ namespace WiFitool
                 updateChecking = false;
                 CheckUpdateButton.IsEnabled = true;
             }
+        }
+
+        private async Task EnsureToolEnvironmentAsync()
+        {
+            if (toolEnvironmentChecking) return;
+            toolEnvironmentChecking = true;
+            try
+            {
+                if (ToolEnvironment.IsReady())
+                {
+                    EnvironmentText.Text = "工具环境：正常";
+                    return;
+                }
+                BeginTaskProgress();
+                EnvironmentText.Text = "工具环境：正在下载";
+                StatusText.Text = "正在下载工具环境…";
+                try
+                {
+                    var progress = new Progress<int>(value => UpdateTaskProgress(value));
+                    await ToolEnvironment.EnsureReadyAsync(progress);
+                    EnvironmentText.Text = "工具环境：正常";
+                    StatusText.Text = "工具环境准备完成";
+                }
+                catch
+                {
+                    EnvironmentText.Text = "工具环境：下载失败";
+                    StatusText.Text = "工具环境下载失败，请手动解压 tools 到 " + ToolEnvironment.Root;
+                }
+                finally { EndTaskProgress(); }
+            }
+            finally { toolEnvironmentChecking = false; }
         }
 
         private async void OpenButton_Click(object sender, RoutedEventArgs e)

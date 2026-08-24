@@ -31,7 +31,7 @@ namespace WiFitool.Services
 
         public AdbService(ToolRunner runner)
         {
-            this.runner = runner; adbDirectory = Path.Combine(Path.GetDirectoryName(typeof(AdbService).Assembly.Location), "tools", "adb"); adbPath = Path.Combine(adbDirectory, "adb.exe");
+            this.runner = runner; adbDirectory = Path.Combine(ToolEnvironment.Root, "adb"); adbPath = Path.Combine(adbDirectory, "adb.exe");
         }
 
         public async Task<AdbStatusInfo> CheckStatusAsync(CancellationToken token)

@@ -9,7 +9,7 @@ namespace WiFitool.Services
 {
     internal sealed class RootfsFeatureService
     {
-        private readonly string tools = Path.Combine(Path.GetDirectoryName(typeof(RootfsFeatureService).Assembly.Location), "tools");
+        private readonly string tools = ToolEnvironment.Root;
 
         public Task ApplyAdbdAsync(PartitionInfo partition, WorkspaceSession session)
         {
