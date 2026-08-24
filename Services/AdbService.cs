@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -32,6 +33,24 @@ namespace WiFitool.Services
         public AdbService(ToolRunner runner)
         {
             this.runner = runner; adbDirectory = Path.Combine(ToolEnvironment.Root, "adb"); adbPath = Path.Combine(adbDirectory, "adb.exe");
+        }
+
+        // 只结束本程序 tools 目录下的 adb.exe，不碰其他目录的 adb server。
+        public void StopOwnedAdbServer()
+        {
+            if (!File.Exists(adbPath)) return;
+            foreach (var process in Process.GetProcessesByName("adb"))
+            {
+                try
+                {
+                    if (process.MainModule != null && string.Equals(process.MainModule.FileName, adbPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        process.Kill();
+                    }
+                }
+                catch { }
+                finally { process.Dispose(); }
+            }
         }
 
         public async Task<AdbStatusInfo> CheckStatusAsync(CancellationToken token)

@@ -67,7 +67,7 @@ namespace WiFitool
             FileGrid.ItemsSource = files;
             SizeChanged += MainWindow_SizeChanged;
             Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
-            Closing += delegate { adbTimer.Stop(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); };
+            Closing += delegate { adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); };
             ProcessGrid.ContextMenu = CreateProcessMenu(false);
             CoreProcessGrid.ContextMenu = CreateProcessMenu(true);
             FileGrid.ContextMenu = CreateFileMenu();
