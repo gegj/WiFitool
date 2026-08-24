@@ -143,9 +143,9 @@ namespace WiFitool.Services
             });
         }
 
-        public Task ExportAllAsync(string rootPath, string destination)
+        public Task ExportAllAsync(string rootPath, string destination, bool includeEmptyDirectories)
         {
-            return Task.Run(delegate { CopyDirectory(rootPath, destination); });
+            return Task.Run(delegate { CopyDirectory(rootPath, destination, includeEmptyDirectories); });
         }
 
         public Task DownloadDirectoryAsync(string rootPath, string virtualPath, string destination)
@@ -154,7 +154,7 @@ namespace WiFitool.Services
             {
                 var source = Resolve(rootPath, virtualPath, true);
                 if (!Directory.Exists(source)) throw new InvalidOperationException("目标不是文件夹。");
-                CopyDirectory(source, destination);
+                CopyDirectory(source, destination, true);
             });
         }
 
@@ -189,6 +189,11 @@ namespace WiFitool.Services
         private static Encoding EncodingFor(string name) { if (name == "UTF-16 LE") return new UnicodeEncoding(false, false); if (name == "UTF-16 BE") return new UnicodeEncoding(true, false); if (name == "GB18030") return Encoding.GetEncoding(936); return new UTF8Encoding(false); }
         private static byte[] Prepend(byte[] prefix, byte[] value) { var result = new byte[prefix.Length + value.Length]; Buffer.BlockCopy(prefix, 0, result, 0, prefix.Length); Buffer.BlockCopy(value, 0, result, prefix.Length, value.Length); return result; }
         private static string NormalizeLineEndings(string text, string lineEnding) { var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n'); if (lineEnding == "CRLF") return normalized.Replace("\n", "\r\n"); if (lineEnding == "CR") return normalized.Replace('\n', '\r'); if (lineEnding == "无换行") return normalized.Replace("\n", ""); return normalized; }
-        private static void CopyDirectory(string source, string destination) { Directory.CreateDirectory(destination); foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories)) { if (Path.GetFileName(directory) == ".wifitool.metadata") continue; Directory.CreateDirectory(directory.Replace(source, destination)); } foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories)) { if (Path.GetFileName(file) == ".wifitool.metadata") continue; var target = file.Replace(source, destination); Directory.CreateDirectory(Path.GetDirectoryName(target)); File.Copy(file, target, true); } }
+        private static void CopyDirectory(string source, string destination, bool includeEmptyDirectories)
+        {
+            Directory.CreateDirectory(destination);
+            if (includeEmptyDirectories) foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories)) if (Path.GetFileName(directory) != ".wifitool.metadata") Directory.CreateDirectory(directory.Replace(source, destination));
+            foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories)) { if (Path.GetFileName(file) == ".wifitool.metadata") continue; var target = file.Replace(source, destination); Directory.CreateDirectory(Path.GetDirectoryName(target)); File.Copy(file, target, true); }
+        }
     }
 }
