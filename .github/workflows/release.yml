@@ -34,9 +34,15 @@ jobs:
         shell: pwsh
         run: msbuild WiFitool.csproj /t:Rebuild /p:Configuration=Release
 
+      - name: Package tools
+        shell: pwsh
+        run: Compress-Archive -Path tools -DestinationPath "tools.zip" -CompressionLevel Optimal
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: WiFitool ${{ github.ref_name }}
           generate_release_notes: true
-          files: bin/Release/WiFitool.exe
+          files: |
+            bin/Release/WiFitool.exe
+            tools.zip
