@@ -69,11 +69,27 @@ namespace WiFitool.Services
 
         public async Task<List<ProcessInfo>> ListProcessesAsync(string serial, CancellationToken token)
         {
-            ValidateSerial(serial); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ps", "-A", "-o", "PID,PPID,USER,STAT,NAME,ARGS" }, adbDirectory, token, null); if (result.ExitCode != 0) result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ps" }, adbDirectory, token, null);
-            var list = new List<ProcessInfo>(); if (result.ExitCode == 0 && result.StandardOutput.IndexOf("bad -o", StringComparison.OrdinalIgnoreCase) < 0) foreach (var line in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) { var item = ParseProcess(line); if (item != null) list.Add(item); }
-            if (list.Count == 0) { result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ps" }, adbDirectory, token, null); foreach (var line in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) { var item = ParseProcess(line); if (item != null) list.Add(item); } }
+            ValidateSerial(serial);
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ps", "-A", "-o", "PID,PPID,USER,STAT,NAME,ARGS" }, adbDirectory, token, null);
+            var list = ParseProcessOutput(result);
+            if (result.ExitCode != 0 || list.Count == 0)
+            {
+                result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ps" }, adbDirectory, token, null);
+                list = ParseProcessOutput(result);
+            }
             if (result.ExitCode != 0) throw new InvalidOperationException("无法读取设备进程：" + result.StandardError);
             return list.OrderBy(x => x.IsCoreProcess).ThenBy(x => x.Pid).ToList();
+        }
+
+        private static List<ProcessInfo> ParseProcessOutput(ToolResult result)
+        {
+            var list = new List<ProcessInfo>();
+            foreach (var line in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var item = ParseProcess(line);
+                if (item != null) list.Add(item);
+            }
+            return list;
         }
 
         public async Task<ProcessScanResult> ListProcessesWithStartupAsync(string serial, CancellationToken token)
@@ -272,7 +288,7 @@ namespace WiFitool.Services
                 var name = string.Join(" ", dateAndName.Skip(5)); if (name == "." || name == ".." || name.EndsWith(" .", StringComparison.Ordinal) || name.EndsWith(" ..", StringComparison.Ordinal)) continue;
                 var bareName = name; string target = null; var linkIndex = name.IndexOf(" -> ", StringComparison.Ordinal); if (linkIndex >= 0) { bareName = name.Substring(0, linkIndex); target = name.Substring(linkIndex + 4); }
                 var mode = ParseMode(m.Groups[1].Value + m.Groups[2].Value); var childPath = path == "/" ? "/" + bareName : path + "/" + bareName;
-                list.Add(new WorkspaceEntry { Name = bareName, Path = childPath, Kind = m.Groups[1].Value == "d" ? "目录" : m.Groups[1].Value == "l" ? "符号链接" : "文件", Size = long.Parse(m.Groups[6].Value, CultureInfo.InvariantCulture), UnixMode = mode, UnixModeText = m.Groups[1].Value + m.Groups[2].Value, Owner = m.Groups[4].Value + ":" + m.Groups[5].Value, Modified = modified, Target = target, IsAdb = true, CanWrite = true });
+                list.Add(new WorkspaceEntry { Name = bareName, Path = childPath, Kind = m.Groups[1].Value == "d" ? "目录" : m.Groups[1].Value == "l" ? "符号链接" : "文件", Size = long.Parse(m.Groups[6].Value, CultureInfo.InvariantCulture), UnixMode = mode, UnixModeText = m.Groups[1].Value + m.Groups[2].Value, Owner = m.Groups[4].Value + ":" + m.Groups[5].Value, Modified = modified, Target = target });
             }
             return list.OrderBy(x => x.Kind == "符号链接" ? 2 : x.Kind == "目录" ? 0 : 1).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }

@@ -35,7 +35,7 @@ namespace WiFitool.Services
                     return new ImageInfo { Path = fullPath, Name = info.Name, Size = info.Length, TableOffset = i, EraseBlockSize = eraseBlockSize, Partitions = parts, IsStandalone = false };
                 }
 
-                var standalone = new PartitionInfo { Name = "rootfs", Media = "独立 rootfs", Offset = 0, Size = info.Length, FileSystem = "Raw", Compression = "--", Filter = "--", Exportable = true, Duplicates = true, LittleEndian = true };
+                var standalone = new PartitionInfo { Name = "rootfs", Media = "独立 rootfs", Offset = 0, Size = info.Length, FileSystem = "Raw", Compression = "--", Exportable = true, Duplicates = true, LittleEndian = true };
                 DetectFileSystem(stream, standalone);
                 if (standalone.FileSystem != "Raw")
                 {
@@ -63,7 +63,7 @@ namespace WiFitool.Services
                 if (name.Length == 0 || media.Length == 0) return null;
                 if (!string.Equals(media, "nand", StringComparison.OrdinalIgnoreCase)) continue;
                 if (size == 0 || (long)start + size > fileLength) return null;
-                result.Add(new PartitionInfo { Name = name, Media = media, Offset = start, Size = size, FileSystem = "Raw", Compression = "--", Filter = "--", Exportable = true, Duplicates = true, LittleEndian = true });
+                result.Add(new PartitionInfo { Name = name, Media = media, Offset = start, Size = size, FileSystem = "Raw", Compression = "--", Exportable = true, Duplicates = true, LittleEndian = true });
             }
             if (result.Count == 0 || result.Select(p => p.Name.ToLowerInvariant()).Distinct().Count() != result.Count) return null;
             var ordered = result.OrderBy(p => p.Offset).ToList();
@@ -76,7 +76,7 @@ namespace WiFitool.Services
             var length = (int)Math.Min(part.Size, 512L * 1024); var data = new byte[length]; stream.Position = part.Offset; ReadExactly(stream, data, 0, data.Length);
             if (length >= 96 && data[0] == (byte)'h' && data[1] == (byte)'s' && data[2] == (byte)'q' && data[3] == (byte)'s')
             {
-                part.FileSystem = "SquashFS"; part.SquashFsCreationTime = ReadUInt32(data, 8); part.BlockSize = (int)ReadUInt32(data, 12); part.Compression = CompressionName(ReadUInt16(data, 20)); part.DictionarySize = part.BlockSize; part.UsedBytes = (long)ReadUInt64(data, 40); return;
+                part.FileSystem = "SquashFS"; part.SquashFsCreationTime = ReadUInt32(data, 8); part.BlockSize = (int)ReadUInt32(data, 12); part.Compression = CompressionName(ReadUInt16(data, 20)); part.UsedBytes = (long)ReadUInt64(data, 40); return;
             }
             for (var i = 0; i + 12 <= data.Length; i += 4)
             {

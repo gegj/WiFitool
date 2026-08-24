@@ -38,10 +38,6 @@ namespace WiFitool.Models
                 return value;
             }
         }
-        public string Encoding { get; set; }
-        public string LineEnding { get; set; }
         public string Target { get; set; }
-        public bool IsAdb { get; set; }
-        public bool CanWrite { get; set; }
     }
 }

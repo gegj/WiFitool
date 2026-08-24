@@ -20,7 +20,7 @@ namespace WiFitool.Services
                 Directory.CreateDirectory(Workspaces);
                 var path = Path.Combine(Workspaces, "w-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
                 Directory.CreateDirectory(path);
-                var session = new WorkspaceSession { RootPath = path, OriginalImagePath = image.Path };
+                var session = new WorkspaceSession { RootPath = path };
                 try
                 {
                     var partitionDir = Path.Combine(path, "partitions"); Directory.CreateDirectory(partitionDir);

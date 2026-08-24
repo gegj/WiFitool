@@ -5,7 +5,6 @@ namespace WiFitool.Models
     internal sealed class WorkspaceSession
     {
         public string RootPath { get; set; }
-        public string OriginalImagePath { get; set; }
         public Dictionary<string, string> PartitionFiles { get; private set; }
         public Dictionary<string, string> ExtractedDirectories { get; private set; }
         public Dictionary<string, string> RepackedFiles { get; private set; }

@@ -40,7 +40,7 @@ namespace WiFitool.Services
                 var mode = saved != null ? saved.Mode : isDirectory ? Convert.ToInt32("755", 8) : cookie ? Convert.ToInt32("120777", 8) : Convert.ToInt32("644", 8);
                 var kind = isDirectory ? "目录" : cookie ? "符号链接" : "文件";
                 var size = isDirectory ? 0 : ((FileInfo)entry).Length;
-                list.Add(new WorkspaceEntry { Name = entry.Name, Path = virtualEntryPath, Kind = kind, Size = cookie ? 0 : size, UnixMode = mode, UnixModeText = ModeText(mode, isDirectory ? 'd' : cookie ? 'l' : '-'), Owner = saved == null ? "未知:未知" : saved.Owner, Modified = saved == null ? entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") : saved.Modified, Target = cookie ? target : saved == null ? null : saved.Target, CanWrite = true });
+                list.Add(new WorkspaceEntry { Name = entry.Name, Path = virtualEntryPath, Kind = kind, Size = cookie ? 0 : size, UnixMode = mode, UnixModeText = ModeText(mode, isDirectory ? 'd' : cookie ? 'l' : '-'), Owner = saved == null ? "未知:未知" : saved.Owner, Modified = saved == null ? entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") : saved.Modified, Target = cookie ? target : saved == null ? null : saved.Target });
             }
             var currentDirectory = WorkspaceMetadataService.Normalize(virtualPath);
             foreach (var item in metadata)
@@ -48,7 +48,7 @@ namespace WiFitool.Services
                 if (item.Value == null || item.Value.Kind != "symlink" || physicalEntries.Contains(item.Key) || !IsDirectChild(item.Key, currentDirectory)) continue;
                 var name = item.Key.Substring(currentDirectory == "/" ? 1 : currentDirectory.Length + 1);
                 var mode = item.Value.Mode > 0 ? item.Value.Mode : Convert.ToInt32("120777", 8);
-                list.Add(new WorkspaceEntry { Name = name, Path = Combine(virtualPath, name), Kind = "符号链接", Size = 0, UnixMode = mode, UnixModeText = ModeText(mode, 'l'), Owner = string.IsNullOrWhiteSpace(item.Value.Owner) ? "未知:未知" : item.Value.Owner, Modified = item.Value.Modified, Target = item.Value.Target, CanWrite = true });
+                list.Add(new WorkspaceEntry { Name = name, Path = Combine(virtualPath, name), Kind = "符号链接", Size = 0, UnixMode = mode, UnixModeText = ModeText(mode, 'l'), Owner = string.IsNullOrWhiteSpace(item.Value.Owner) ? "未知:未知" : item.Value.Owner, Modified = item.Value.Modified, Target = item.Value.Target });
             }
             return list.OrderBy(x => x.Kind == "符号链接" ? 2 : x.Kind == "目录" ? 0 : 1).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
@@ -65,7 +65,7 @@ namespace WiFitool.Services
             string text;
             try { text = encoding.GetString(bytes, skip, bytes.Length - skip); }
             catch (DecoderFallbackException) { encoding = Encoding.GetEncoding(54936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback); name = "GB18030"; text = encoding.GetString(bytes); }
-            if (bytes.Any(c => c == 0) || text.Any(c => char.IsControl(c) && c != '\r' && c != '\n' && c != '\t' && c != '\f')) throw new InvalidDataException("该文件被识别为二进制，不能使用文本编辑器打开。");
+            if ((name != "UTF-16 LE" && name != "UTF-16 BE" && bytes.Any(c => c == 0)) || text.Any(c => char.IsControl(c) && c != '\r' && c != '\n' && c != '\t' && c != '\f')) throw new InvalidDataException("该文件被识别为二进制，不能使用文本编辑器打开。");
             return new TextFileData { Text = text, EncodingName = name, LineEnding = text.Contains("\r\n") ? "CRLF" : text.Contains('\n') ? "LF" : text.Contains('\r') ? "CR" : "无换行" };
         }
 
@@ -91,11 +91,6 @@ namespace WiFitool.Services
                 metadata[WorkspaceMetadataService.Normalize(virtualPath)] = entry;
                 metadataService.Save(rootPath, metadata);
             });
-        }
-
-        public Task UploadAsync(string rootPath, string virtualDirectory, string sourcePath)
-        {
-            return UploadFileAsync(rootPath, virtualDirectory, sourcePath, false);
         }
 
         public Task UploadFileAsync(string rootPath, string virtualDirectory, string sourcePath, bool overwrite)

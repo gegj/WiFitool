@@ -66,10 +66,4 @@ namespace WiFitool.Models
         }
     }
 
-    internal sealed class AdbDirectoryResult
-    {
-        public string Path { get; set; }
-        public List<WorkspaceEntry> Entries { get; private set; }
-        public AdbDirectoryResult() { Entries = new List<WorkspaceEntry>(); }
-    }
 }
