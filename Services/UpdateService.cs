@@ -27,7 +27,7 @@ namespace WiFitool.Services
                 if (!File.Exists(cachePath)) return true;
                 long ticks;
                 if (!long.TryParse(File.ReadAllText(cachePath), out ticks)) return true;
-                return DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) >= TimeSpan.FromHours(12);
+                return DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) >= TimeSpan.FromMinutes(10);
             }
             catch { return true; }
         }
