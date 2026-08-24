@@ -290,8 +290,9 @@ namespace WiFitool.Services
         {
             ValidateSerial(serial);
             var path = NormalizeRemotePath(virtualPath);
-            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "[ -d " + QuoteShellArgument(path) + " ]" }, adbDirectory, token, null);
-            return result.ExitCode == 0;
+            var command = "if [ -d " + QuoteShellArgument(path) + " ]; then echo __WIFITOOL_DIRECTORY__; else echo __WIFITOOL_MISSING__; fi";
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null);
+            return result.StandardOutput.IndexOf("__WIFITOOL_DIRECTORY__", StringComparison.Ordinal) >= 0;
         }
 
         public async Task<long> GetFreeBytesAsync(string serial, string virtualPath, CancellationToken token)
