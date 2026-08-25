@@ -121,7 +121,6 @@ namespace WiFitool
             encodingCombo = new ComboBox { Width = 118, Margin = new Thickness(6, 0, 16, 0), FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
             foreach (var item in new[] { "UTF-8", "UTF-8 BOM", "UTF-16 LE", "UTF-16 BE", "GB18030" }) encodingCombo.Items.Add(item);
             encodingCombo.SelectedItem = data.EncodingName;
-            encodingCombo.SelectionChanged += delegate { ReopenWithEncoding(); };
             encodingPanel.Children.Add(encodingCombo);
             Grid.SetColumn(encodingPanel, 0);
             statusBar.Children.Add(encodingPanel);
@@ -143,12 +142,14 @@ namespace WiFitool
             textBox.SelectionChanged += delegate { UpdatePosition(); };
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+            var repair = new Button { Content = "修复为 UTF-8", MinWidth = 100, Margin = new Thickness(0, 0, 8, 0) };
             var find = new Button { Content = "查找", MinWidth = 74, Margin = new Thickness(0, 0, 8, 0) };
             var save = new Button { Content = "保存", MinWidth = 74, IsDefault = true, Margin = new Thickness(0, 0, 8, 0), Background = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)), Foreground = Brushes.White, BorderBrush = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)) };
             var cancel = new Button { Content = "取消", MinWidth = 74, IsCancel = true, Background = GetBrush("PanelAltBrush", Color.FromRgb(27, 42, 64)), Foreground = GetBrush("TextBrush", Color.FromRgb(240, 245, 252)), BorderBrush = GetBrush("BorderBrush", Color.FromRgb(43, 58, 80)) };
+            repair.Click += delegate { RepairToUtf8(); };
             find.Click += delegate { BeginFind(); };
             save.Click += delegate { DialogResult = true; Close(); };
-            buttons.Children.Add(find); buttons.Children.Add(save); buttons.Children.Add(cancel);
+            buttons.Children.Add(repair); buttons.Children.Add(find); buttons.Children.Add(save); buttons.Children.Add(cancel);
             Grid.SetRow(buttons, 2);
             panel.Children.Add(buttons);
             Grid.SetRow(panel, 1);
@@ -179,32 +180,33 @@ namespace WiFitool
             positionText.Text = "行 " + line + " 列 " + column;
         }
 
-        private void ReopenWithEncoding()
+        private void RepairToUtf8()
         {
             if (data == null || data.RawBytes == null) return;
-            var encodingName = encodingCombo.SelectedItem as string;
-            if (string.IsNullOrEmpty(encodingName)) return;
             try
             {
-                textBox.Text = DecodeBytes(data.RawBytes, encodingName);
+                var bytes = data.RawBytes;
+                var builder = new StringBuilder();
+                var utf8 = new UTF8Encoding(false, true);
+                var gb18030 = Encoding.GetEncoding(54936);
+                var index = 0;
+                while (index < bytes.Length)
+                {
+                    if (bytes[index] < 0x80) { builder.Append((char)bytes[index]); index++; continue; }
+                    var end = index;
+                    while (end < bytes.Length && bytes[end] >= 0x80) end++;
+                    var segment = new byte[end - index];
+                    Buffer.BlockCopy(bytes, index, segment, 0, segment.Length);
+                    try { builder.Append(utf8.GetString(segment)); }
+                    catch (DecoderFallbackException) { builder.Append(gb18030.GetString(segment)); }
+                    index = end;
+                }
+                textBox.Text = builder.ToString();
+                encodingCombo.SelectedItem = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? "UTF-8 BOM" : "UTF-8";
                 UpdatePosition();
             }
-            catch (Exception ex) { MessageBox.Show(this, "按所选编码打开失败：" + ex.Message, "编码", MessageBoxButton.OK, MessageBoxImage.Warning); }
+            catch (Exception ex) { MessageBox.Show(this, "修复失败：" + ex.Message, "修复为 UTF-8", MessageBoxButton.OK, MessageBoxImage.Warning); }
         }
-
-        private static string DecodeBytes(byte[] bytes, string encodingName)
-        {
-            if (encodingName == "UTF-8 BOM")
-            {
-                var start = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
-                return new UTF8Encoding(false, true).GetString(bytes, start, bytes.Length - start);
-            }
-            if (encodingName == "UTF-16 LE") return new UnicodeEncoding(false, false, true).GetString(bytes);
-            if (encodingName == "UTF-16 BE") return new UnicodeEncoding(true, false, true).GetString(bytes);
-            if (encodingName == "GB18030") return Encoding.GetEncoding(54936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback).GetString(bytes);
-            return new UTF8Encoding(false, true).GetString(bytes);
-        }
-
         private void TextEditorWindow_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { BeginFind(); e.Handled = true; }
