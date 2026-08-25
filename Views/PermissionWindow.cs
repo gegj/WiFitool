@@ -13,6 +13,7 @@ namespace WiFitool
         private readonly TextBox octal;
         private readonly TextBox owner;
         private readonly CheckBox[] checks;
+        private bool syncing;
         public int Mode { get; private set; }
         public string OwnerValue { get { return owner.Text.Trim(); } }
 
@@ -189,13 +190,20 @@ namespace WiFitool
 
         private void SyncChecksFromOctal()
         {
+            if (syncing) return;
             int mode; if (!TryParseOctal(octal.Text, out mode)) return;
-            for (var i = 0; i < 9; i++) checks[i].IsChecked = (mode & (1 << (8 - i))) != 0;
+            syncing = true;
+            try { for (var i = 0; i < 9; i++) checks[i].IsChecked = (mode & (1 << (8 - i))) != 0; }
+            finally { syncing = false; }
         }
 
         private void SyncOctalFromChecks()
         {
-            var mode = 0; for (var i = 0; i < 9; i++) if (checks[i].IsChecked == true) mode |= 1 << (8 - i); octal.Text = mode.ToString("000");
+            if (syncing) return;
+            var mode = 0; for (var i = 0; i < 9; i++) if (checks[i].IsChecked == true) mode |= 1 << (8 - i);
+            syncing = true;
+            try { octal.Text = mode.ToString("000"); }
+            finally { syncing = false; }
         }
 
         private static bool TryParseOctal(string value, out int mode)
