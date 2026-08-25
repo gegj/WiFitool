@@ -1,7 +1,6 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using WiFitool.Models;
@@ -115,15 +114,36 @@ namespace WiFitool
             panel.Children.Add(owner);
 
             checks = new CheckBox[9];
-            var labels = new[] { "所有者读", "所有者写", "所有者执行", "组读", "组写", "组执行", "其他读", "其他写", "其他执行" };
-            var checkGrid = new UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 0) };
-            for (var i = 0; i < checks.Length; i++)
+            var columnHeaders = new[] { "所有者", "组", "其他" };
+            var permissionNames = new[] { "读", "写", "执行" };
+            var checkGrid = new Grid { Margin = new Thickness(0, 0, 0, 0) };
+            for (var column = 0; column < 3; column++) checkGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var row = 0; row < 4; row++) checkGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var column = 0; column < 3; column++)
             {
-                var box = new CheckBox { Content = labels[i], Margin = new Thickness(0, 3, 8, 3), Style = (Style)Application.Current.FindResource("PermissionCheckBoxStyle") };
-                checks[i] = box;
-                box.Checked += delegate { SyncOctalFromChecks(); };
-                box.Unchecked += delegate { SyncOctalFromChecks(); };
-                checkGrid.Children.Add(box);
+                var columnHeader = new TextBlock
+                {
+                    Text = columnHeaders[column],
+                    FontSize = 13,
+                    FontWeight = FontWeights.SemiBold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 0, 0, 6),
+                    Foreground = GetBrush("MutedBrush", Color.FromRgb(154, 170, 192))
+                };
+                Grid.SetRow(columnHeader, 0);
+                Grid.SetColumn(columnHeader, column);
+                checkGrid.Children.Add(columnHeader);
+                for (var row = 0; row < 3; row++)
+                {
+                    var index = column * 3 + row;
+                    var box = new CheckBox { Content = permissionNames[row], Margin = new Thickness(4, 3, 4, 3), Style = (Style)Application.Current.FindResource("PermissionCheckBoxStyle") };
+                    checks[index] = box;
+                    box.Checked += delegate { SyncOctalFromChecks(); };
+                    box.Unchecked += delegate { SyncOctalFromChecks(); };
+                    Grid.SetRow(box, row + 1);
+                    Grid.SetColumn(box, column);
+                    checkGrid.Children.Add(box);
+                }
             }
             panel.Children.Add(checkGrid);
             Grid.SetRow(panel, 1);
@@ -202,7 +222,7 @@ namespace WiFitool
             if (syncing) return;
             var mode = 0; for (var i = 0; i < 9; i++) if (checks[i].IsChecked == true) mode |= 1 << (8 - i);
             syncing = true;
-            try { octal.Text = mode.ToString("000"); }
+            try { octal.Text = Convert.ToString(mode, 8).PadLeft(3, '0'); }
             finally { syncing = false; }
         }
 
