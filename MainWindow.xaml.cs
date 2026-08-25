@@ -839,6 +839,7 @@ namespace WiFitool
             if (!CanUploadToCurrentSource()) { MessageBox.Show(this, "请先选择本地固件分区或连接在线 ADB 设备。", "上传", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             var sources = sourcePaths.Where(x => File.Exists(x) || Directory.Exists(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (sources.Count == 0) return;
+            if (MessageBox.Show(this, "将上传文件/文件夹，若目标存在同名文件或文件夹会被覆盖。是否继续？", "确认上传", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             var targetIsAdb = adbMode;
             var targetSerial = adbSerial;
             var targetRoot = currentRoot;
@@ -850,28 +851,14 @@ namespace WiFitool
                     token.ThrowIfCancellationRequested();
                     try
                     {
-                        if (Directory.Exists(sourcePath)) changed = await UploadSourceDirectoryAsync(sourcePath, targetDirectory, targetIsAdb, targetSerial, targetRoot, token, false) || changed;
-                        else changed = await UploadSourceFileAsync(sourcePath, targetDirectory, Path.GetFileName(sourcePath), false, targetIsAdb, targetSerial, targetRoot, token) || changed;
+                        if (Directory.Exists(sourcePath)) changed = await UploadSourceDirectoryAsync(sourcePath, targetDirectory, targetIsAdb, targetSerial, targetRoot, token) || changed;
+                        else changed = await UploadSourceFileAsync(sourcePath, targetDirectory, Path.GetFileName(sourcePath), targetIsAdb, targetSerial, targetRoot, token) || changed;
                     }
                     catch (Exception ex)
                     {
                         throw new InvalidOperationException("上传 " + Path.GetFileName(sourcePath) + " 失败：" + ex.Message, ex);
                     }
                 }
-                await RefreshAfterUploadAsync(targetIsAdb, targetSerial, targetRoot, changed);
-                StatusText.Text = changed ? "上传完成" : "已跳过上传";
-            });
-        }
-
-        private async Task UploadNamedFileAsync(string sourcePath, string targetDirectory, string targetName, bool forceOverwrite)
-        {
-            if (!CanUploadToCurrentSource()) { MessageBox.Show(this, "请先选择本地固件分区或连接在线 ADB 设备。", "上传", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            var targetIsAdb = adbMode;
-            var targetSerial = adbSerial;
-            var targetRoot = currentRoot;
-            await RunBusyAsync("正在上传…", async token =>
-            {
-                var changed = await UploadSourceFileAsync(sourcePath, targetDirectory, targetName, forceOverwrite, targetIsAdb, targetSerial, targetRoot, token);
                 await RefreshAfterUploadAsync(targetIsAdb, targetSerial, targetRoot, changed);
                 StatusText.Text = changed ? "上传完成" : "已跳过上传";
             });
@@ -914,39 +901,34 @@ namespace WiFitool
             });
         }
 
-        private async Task<bool> UploadSourceDirectoryAsync(string sourcePath, string targetDirectory, bool targetIsAdb, string targetSerial, string targetRoot, CancellationToken token, bool overwriteExisting)
+        private async Task<bool> UploadSourceDirectoryAsync(string sourcePath, string targetDirectory, bool targetIsAdb, string targetSerial, string targetRoot, CancellationToken token)
         {
             var source = new DirectoryInfo(sourcePath);
             if ((source.Attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("不支持上传链接文件夹。");
             var targetPath = CombineVirtualPath(targetDirectory, source.Name);
             var exists = targetIsAdb ? await adbService.RemoteDirectoryExistsAsync(targetSerial, targetPath, token) : Directory.Exists(fileService.Resolve(targetRoot, targetPath, false));
-            if (exists)
-            {
-                if (!overwriteExisting && MessageBox.Show(this, "目标已有同名文件夹：" + targetPath + "\n将合并上传并覆盖所有同名文件，不会删除或清空原有内容。是否继续？", "合并上传", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
-            }
-            else
+            if (!exists)
             {
                 var fileExists = targetIsAdb ? await adbService.RemoteFileExistsAsync(targetSerial, targetPath, token) : File.Exists(fileService.Resolve(targetRoot, targetPath, false));
                 if (fileExists) throw new InvalidOperationException("目标路径已存在同名文件：" + targetPath);
                 if (targetIsAdb) await adbService.CreateDirectoryAsync(targetSerial, targetDirectory, source.Name, token); else await fileService.CreateDirectoryAsync(targetRoot, targetDirectory, source.Name);
             }
             var changed = !exists;
-            foreach (var directory in source.EnumerateDirectories()) changed = await UploadSourceDirectoryAsync(directory.FullName, targetPath, targetIsAdb, targetSerial, targetRoot, token, true) || changed;
+            foreach (var directory in source.EnumerateDirectories()) changed = await UploadSourceDirectoryAsync(directory.FullName, targetPath, targetIsAdb, targetSerial, targetRoot, token) || changed;
             foreach (var file in source.EnumerateFiles())
             {
                 if ((file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-                changed = await UploadSourceFileAsync(file.FullName, targetPath, file.Name, true, targetIsAdb, targetSerial, targetRoot, token) || changed;
+                changed = await UploadSourceFileAsync(file.FullName, targetPath, file.Name, targetIsAdb, targetSerial, targetRoot, token) || changed;
             }
             return changed;
         }
 
-        private async Task<bool> UploadSourceFileAsync(string sourcePath, string targetDirectory, string targetName, bool forceOverwrite, bool targetIsAdb, string targetSerial, string targetRoot, CancellationToken token)
+        private async Task<bool> UploadSourceFileAsync(string sourcePath, string targetDirectory, string targetName, bool targetIsAdb, string targetSerial, string targetRoot, CancellationToken token)
         {
             var targetPath = CombineVirtualPath(targetDirectory, targetName);
             var existing = targetIsAdb ? await adbService.RemoteFileExistsAsync(targetSerial, targetPath, token) : File.Exists(fileService.Resolve(targetRoot, targetPath, false));
             var folderExists = targetIsAdb ? await adbService.RemoteDirectoryExistsAsync(targetSerial, targetPath, token) : Directory.Exists(fileService.Resolve(targetRoot, targetPath, false));
             if (folderExists) throw new InvalidOperationException("目标路径是文件夹：" + targetPath);
-            if (existing && !forceOverwrite && MessageBox.Show(this, "目标已有文件：" + targetPath + "\n是否覆盖？", "确认覆盖", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
             StatusText.Text = "正在上传：" + targetName;
             if (targetIsAdb)
             {
