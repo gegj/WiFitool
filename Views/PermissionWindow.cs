@@ -12,9 +12,11 @@ namespace WiFitool
         private readonly TextBox octal;
         private readonly TextBox owner;
         private readonly CheckBox[] checks;
+        private readonly CheckBox recursiveCheck;
         private bool syncing;
         public int Mode { get; private set; }
         public string OwnerValue { get { return owner.Text.Trim(); } }
+        public bool Recursive { get { return recursiveCheck.IsChecked == true; } }
 
         public PermissionWindow(WorkspaceEntry entry)
         {
@@ -153,6 +155,15 @@ namespace WiFitool
                 }
             }
             panel.Children.Add(checkGrid);
+            recursiveCheck = new CheckBox
+            {
+                Content = "递归应用到子文件夹和文件",
+                Margin = new Thickness(0, 12, 0, 0),
+                FontSize = 13,
+                Style = (Style)Application.Current.FindResource("PermissionCheckBoxStyle")
+            };
+            recursiveCheck.Visibility = entry.Kind == "目录" ? Visibility.Visible : Visibility.Collapsed;
+            panel.Children.Add(recursiveCheck);
             Grid.SetRow(panel, 1);
             root.Children.Add(panel);
 

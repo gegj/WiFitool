@@ -774,7 +774,33 @@ namespace WiFitool
         {
             var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var rename = new MenuItem { Header = "重命名" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
             edit.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && entry.Kind != "目录" && entry.Kind != "符号链接") { if (adbMode) await EditAdbFileAsync(entry); else FileGrid_MouseDoubleClick(null, null); } };
-            permissions.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null || entry.Kind == "符号链接") return; var dialog = new PermissionWindow(entry); dialog.Owner = this; if (adbMode) { if (dialog.ShowDialog() == true) { try { await RunTaskProgressAsync(async () => { await adbService.SetModeAsync(adbSerial, entry.Path, dialog.Mode, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "权限", MessageBoxButton.OK, MessageBoxImage.Error); } } } else if (dialog.ShowDialog() == true) { try { await RunTaskProgressAsync(() => Task.Run(() => fileService.SetPermissions(currentRoot, entry.Path, dialog.Mode, dialog.OwnerValue))); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "权限", MessageBoxButton.OK, MessageBoxImage.Error); } } };
+            permissions.Click += async delegate
+            {
+                var entry = FileGrid.SelectedItem as WorkspaceEntry;
+                if (entry == null || entry.Kind == "符号链接") return;
+                var dialog = new PermissionWindow(entry); dialog.Owner = this;
+                if (dialog.ShowDialog() != true) return;
+                try
+                {
+                    if (adbMode)
+                    {
+                        await RunTaskProgressAsync(async () =>
+                        {
+                            await adbService.SetModeAsync(adbSerial, entry.Path, dialog.Mode, dialog.Recursive, CancellationToken.None);
+                            if (!string.IsNullOrWhiteSpace(dialog.OwnerValue) && !string.Equals(dialog.OwnerValue, entry.Owner, StringComparison.OrdinalIgnoreCase)) await adbService.SetOwnerAsync(adbSerial, entry.Path, dialog.OwnerValue, dialog.Recursive, CancellationToken.None);
+                            await LoadAdbFilesAsyncTask();
+                        });
+                    }
+                    else
+                    {
+                        await RunTaskProgressAsync(() => Task.Run(() => fileService.SetPermissions(currentRoot, entry.Path, dialog.Mode, dialog.OwnerValue, dialog.Recursive)));
+                        var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName);
+                        if (p != null) p.Modified = true;
+                        LoadFiles();
+                    }
+                }
+                catch (Exception ex) { MessageBox.Show(this, ex.Message, "权限", MessageBoxButton.OK, MessageBoxImage.Error); }
+            };
             rename.Click += async delegate
             {
                 var entry = FileGrid.SelectedItem as WorkspaceEntry;
@@ -1095,6 +1121,8 @@ namespace WiFitool
                 var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding);
                 var updated = encoding.GetBytes(normalized);
                 if (editor.SelectedEncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated);
+                if (editor.SelectedEncodingName == "UTF-16 LE") updated = Prepend(new byte[] { 0xFF, 0xFE }, updated);
+                if (editor.SelectedEncodingName == "UTF-16 BE") updated = Prepend(new byte[] { 0xFE, 0xFF }, updated);
                 if (MessageBox.Show(this, "确认应用到设备：" + path + "？", "应用设备文件", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
                     await RunTaskProgressAsync(async () => { await adbService.WriteFileAsync(adbSerial, path, updated, CancellationToken.None); await LoadAdbFilesAsyncTask(); });
@@ -1105,7 +1133,7 @@ namespace WiFitool
             catch (Exception ex) { MessageBox.Show(this, "设备文件无法编辑：" + ex.Message, "ADB 文件", MessageBoxButton.OK, MessageBoxImage.Information); }
         }
 
-        private static Encoding EncodingForName(string name) { if (name == "UTF-16 LE") return new UnicodeEncoding(false, false); if (name == "UTF-16 BE") return new UnicodeEncoding(true, false); if (name == "GB18030") return Encoding.GetEncoding(936); return new UTF8Encoding(false); }
+        private static Encoding EncodingForName(string name) { if (name == "UTF-16 LE") return new UnicodeEncoding(false, false); if (name == "UTF-16 BE") return new UnicodeEncoding(true, false); if (name == "GB18030") return Encoding.GetEncoding(54936); return new UTF8Encoding(false); }
         private static string NormalizeLineEndings(string text, string ending) { var value = text.Replace("\r\n", "\n").Replace('\r', '\n'); if (ending == "CRLF") return value.Replace("\n", "\r\n"); if (ending == "CR") return value.Replace('\n', '\r'); if (ending == "无换行") return value.Replace("\n", ""); return value; }
         private static byte[] Prepend(byte[] prefix, byte[] value) { var result = new byte[prefix.Length + value.Length]; Buffer.BlockCopy(prefix, 0, result, 0, prefix.Length); Buffer.BlockCopy(value, 0, result, prefix.Length, value.Length); return result; }
 
@@ -1141,13 +1169,13 @@ namespace WiFitool
                             data = new TextFileData { Text = "", EncodingName = "UTF-8", LineEnding = "LF" };
                         }
                     });
-                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true && MessageBox.Show(this, "确认应用 /etc/hosts 到设备？", "Hosts", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { await RunTaskProgressAsync(async () => { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var updated = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated); await adbService.CreateFileAsync(adbSerial, hostsPath, updated, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); }
+                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true && MessageBox.Show(this, "确认应用 /etc/hosts 到设备？", "Hosts", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { await RunTaskProgressAsync(async () => { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var updated = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated); if (editor.SelectedEncodingName == "UTF-16 LE") updated = Prepend(new byte[] { 0xFF, 0xFE }, updated); if (editor.SelectedEncodingName == "UTF-16 BE") updated = Prepend(new byte[] { 0xFE, 0xFF }, updated); await adbService.CreateFileAsync(adbSerial, hostsPath, updated, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); }
                 }
                 else
                 {
                     if (string.IsNullOrEmpty(currentRoot)) { MessageBox.Show(this, "请先在项目概览中解包并选择分区。", "Hosts", MessageBoxButton.OK, MessageBoxImage.Information); return; }
                     TextFileData data; try { data = fileService.ReadText(currentRoot, hostsPath); } catch { data = new TextFileData { Text = "", EncodingName = "UTF-8", LineEnding = "LF" }; }
-                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true) { data.EncodingName = editor.SelectedEncodingName; data.LineEnding = editor.SelectedLineEnding; await RunTaskProgressAsync(async () => { var path = fileService.Resolve(currentRoot, hostsPath, false); Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) await fileService.SaveTextAsync(currentRoot, hostsPath, data, editor.EditorText); else { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var bytes = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") bytes = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, bytes); File.WriteAllBytes(path, bytes); new WorkspaceMetadataService().Update(currentRoot, hostsPath, new WorkspaceMetadata { Kind = "file", Mode = Convert.ToInt32("644", 8), Owner = "0:0", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); } }); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); }
+                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true) { data.EncodingName = editor.SelectedEncodingName; data.LineEnding = editor.SelectedLineEnding; await RunTaskProgressAsync(async () => { var path = fileService.Resolve(currentRoot, hostsPath, false); Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) await fileService.SaveTextAsync(currentRoot, hostsPath, data, editor.EditorText); else { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var bytes = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") bytes = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, bytes); if (editor.SelectedEncodingName == "UTF-16 LE") bytes = Prepend(new byte[] { 0xFF, 0xFE }, bytes); if (editor.SelectedEncodingName == "UTF-16 BE") bytes = Prepend(new byte[] { 0xFE, 0xFF }, bytes); File.WriteAllBytes(path, bytes); new WorkspaceMetadataService().Update(currentRoot, hostsPath, new WorkspaceMetadata { Kind = "file", Mode = Convert.ToInt32("644", 8), Owner = "0:0", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); } }); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); }
                 }
             }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "Hosts 管理失败", MessageBoxButton.OK, MessageBoxImage.Error); }

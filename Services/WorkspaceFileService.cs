@@ -187,14 +187,28 @@ namespace WiFitool.Services
             });
         }
 
-        public void SetPermissions(string rootPath, string virtualPath, int mode, string owner)
+        public void SetPermissions(string rootPath, string virtualPath, int mode, string owner, bool recursive)
         {
             var metadata = metadataService.Load(rootPath); WorkspaceMetadata saved;
             var physical = Resolve(rootPath, virtualPath, false);
             string target;
-            var kind = metadata.TryGetValue(WorkspaceMetadataService.Normalize(virtualPath), out saved) && saved != null ? saved.Kind : Directory.Exists(physical) ? "directory" : IsCookie(physical, out target) ? "symlink" : "file";
+            var normalized = WorkspaceMetadataService.Normalize(virtualPath);
+            var kind = metadata.TryGetValue(normalized, out saved) && saved != null ? saved.Kind : Directory.Exists(physical) ? "directory" : IsCookie(physical, out target) ? "symlink" : "file";
             if (kind == "symlink") throw new InvalidOperationException("符号链接权限由目标文件系统元数据决定，不能单独修改。");
-            metadata[WorkspaceMetadataService.Normalize(virtualPath)] = new WorkspaceMetadata { Mode = mode, Kind = kind, Owner = string.IsNullOrWhiteSpace(owner) ? "未知:未知" : owner, Target = "", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
+            var ownerValue = string.IsNullOrWhiteSpace(owner) ? "未知:未知" : owner;
+            var modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            if (recursive && Directory.Exists(physical))
+            {
+                foreach (var entryPath in Directory.GetFileSystemEntries(physical, "*", SearchOption.AllDirectories))
+                {
+                    var relative = entryPath.Substring(physical.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var virtualEntry = normalized == "/" ? "/" + relative : normalized.TrimEnd('/') + "/" + relative;
+                    string cookieTarget;
+                    if (!Directory.Exists(entryPath) && IsCookie(entryPath, out cookieTarget)) continue;
+                    metadata[WorkspaceMetadataService.Normalize(virtualEntry)] = new WorkspaceMetadata { Mode = mode, Kind = Directory.Exists(entryPath) ? "directory" : "file", Owner = ownerValue, Target = "", Modified = modified };
+                }
+            }
+            metadata[normalized] = new WorkspaceMetadata { Mode = mode, Kind = kind, Owner = ownerValue, Target = "", Modified = modified };
             metadataService.Save(rootPath, metadata);
         }
 
@@ -216,7 +230,7 @@ namespace WiFitool.Services
         }
         private static bool IsCookie(string path, out string target) { target = null; try { var bytes = File.ReadAllBytes(path); var marker = Encoding.ASCII.GetBytes("WIFITOOL_SYMLINK\n"); var jffs = Encoding.ASCII.GetBytes("!<symlink>"); if (bytes.Length >= marker.Length && marker.SequenceEqual(bytes.Take(marker.Length))) { target = Encoding.UTF8.GetString(bytes, marker.Length, bytes.Length - marker.Length); return true; } if (bytes.Length >= jffs.Length && jffs.SequenceEqual(bytes.Take(jffs.Length))) { target = Encoding.UTF8.GetString(bytes, jffs.Length, bytes.Length - jffs.Length).TrimEnd('\0'); return true; } } catch { } return false; }
         private static string ModeText(int mode, char type) { return type + ((mode & 256) != 0 ? "r" : "-") + ((mode & 128) != 0 ? "w" : "-") + ((mode & 64) != 0 ? "x" : "-") + ((mode & 32) != 0 ? "r" : "-") + ((mode & 16) != 0 ? "w" : "-") + ((mode & 8) != 0 ? "x" : "-") + ((mode & 4) != 0 ? "r" : "-") + ((mode & 2) != 0 ? "w" : "-") + ((mode & 1) != 0 ? "x" : "-"); }
-        private static Encoding EncodingFor(string name) { if (name == "UTF-16 LE") return new UnicodeEncoding(false, false); if (name == "UTF-16 BE") return new UnicodeEncoding(true, false); if (name == "GB18030") return Encoding.GetEncoding(936); return new UTF8Encoding(false); }
+        private static Encoding EncodingFor(string name) { if (name == "UTF-16 LE") return new UnicodeEncoding(false, false); if (name == "UTF-16 BE") return new UnicodeEncoding(true, false); if (name == "GB18030") return Encoding.GetEncoding(54936); return new UTF8Encoding(false); }
         private static byte[] Prepend(byte[] prefix, byte[] value) { var result = new byte[prefix.Length + value.Length]; Buffer.BlockCopy(prefix, 0, result, 0, prefix.Length); Buffer.BlockCopy(value, 0, result, prefix.Length, value.Length); return result; }
         private static string NormalizeLineEndings(string text, string lineEnding) { var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n'); if (lineEnding == "CRLF") return normalized.Replace("\n", "\r\n"); if (lineEnding == "CR") return normalized.Replace('\n', '\r'); if (lineEnding == "无换行") return normalized.Replace("\n", ""); return normalized; }
         private static void CopyDirectory(string source, string destination, bool includeEmptyDirectories)

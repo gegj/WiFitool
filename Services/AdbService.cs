@@ -393,9 +393,14 @@ namespace WiFitool.Services
             ValidateSerial(serial); if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(new[] { '/', '\\', '\r', '\n' }) >= 0) throw new InvalidOperationException("目录名称包含不允许的字符。"); var path = CombineRemotePath(NormalizeRemotePath(virtualDirectory), name); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mkdir -p " + QuoteShellArgument(path) }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备目录失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod 755 " + QuoteShellArgument(path) }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置目录权限失败：" + chmod.StandardError);
         }
 
-        public async Task SetModeAsync(string serial, string virtualPath, int mode, CancellationToken token)
+        public async Task SetModeAsync(string serial, string virtualPath, int mode, bool recursive, CancellationToken token)
         {
-            ValidateSerial(serial); if (mode < 0 || mode > 511) throw new InvalidOperationException("Unix 权限无效。"); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod", Convert.ToString(mode, 8), NormalizeRemotePath(virtualPath) }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备权限失败：" + result.StandardError);
+            ValidateSerial(serial); if (mode < 0 || mode > 511) throw new InvalidOperationException("Unix 权限无效。"); var command = "chmod " + (recursive ? "-R " : "") + Convert.ToString(mode, 8) + " " + QuoteShellArgument(NormalizeRemotePath(virtualPath)); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备权限失败：" + result.StandardError);
+        }
+
+        public async Task SetOwnerAsync(string serial, string virtualPath, string owner, bool recursive, CancellationToken token)
+        {
+            ValidateSerial(serial); if (string.IsNullOrWhiteSpace(owner) || owner.IndexOfAny(new[] { ' ', '\t', '\r', '\n' }) >= 0) throw new InvalidOperationException("所有者格式无效。"); var command = "chown " + (recursive ? "-R " : "") + QuoteShellArgument(owner) + " " + QuoteShellArgument(NormalizeRemotePath(virtualPath)); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备所有者失败：" + result.StandardError);
         }
 
         private async Task<int> ReadRemoteModeAsync(string serial, string virtualPath, CancellationToken token)
