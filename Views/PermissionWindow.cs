@@ -121,15 +121,22 @@ namespace WiFitool
             for (var row = 0; row < 4; row++) checkGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             for (var column = 0; column < 3; column++)
             {
-                var columnHeader = new TextBlock
+                var columnHeader = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Margin = new Thickness(4, 0, 0, 6)
+                };
+                columnHeader.Children.Add(new Border { Width = 15, Height = 15, Background = Brushes.Transparent });
+                columnHeader.Children.Add(new TextBlock
                 {
                     Text = columnHeaders[column],
                     FontSize = 13,
                     FontWeight = FontWeights.SemiBold,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    Margin = new Thickness(0, 0, 0, 6),
+                    Margin = new Thickness(7, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
                     Foreground = GetBrush("MutedBrush", Color.FromRgb(154, 170, 192))
-                };
+                });
                 Grid.SetRow(columnHeader, 0);
                 Grid.SetColumn(columnHeader, column);
                 checkGrid.Children.Add(columnHeader);
