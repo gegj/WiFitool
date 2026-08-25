@@ -378,7 +378,7 @@ namespace WiFitool.Services
                     var move = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mv " + QuoteShellArgument(tempRemote) + " " + QuoteShellArgument(remote) }, adbDirectory, token, null);
                     if (move.ExitCode != 0) throw new InvalidOperationException("替换设备文件失败：" + move.StandardError);
                 }
-                var mode = originalMode > 0 ? originalMode : Convert.ToInt32("644", 8);
+                var mode = originalMode > 0 ? originalMode : Convert.ToInt32("755", 8);
                 var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod " + Convert.ToString(mode, 8) + " " + QuoteShellArgument(remote) }, adbDirectory, token, null);
                 if (chmod.ExitCode != 0) throw new InvalidOperationException("设置文件权限失败：" + chmod.StandardError);
             }

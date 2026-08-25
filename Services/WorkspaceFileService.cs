@@ -109,7 +109,7 @@ namespace WiFitool.Services
                 metadata.TryGetValue(WorkspaceMetadataService.Normalize(targetVirtual), out original);
                 metadata[WorkspaceMetadataService.Normalize(targetVirtual)] = new WorkspaceMetadata
                 {
-                    Mode = original == null ? Convert.ToInt32("644", 8) : original.Mode,
+                    Mode = original == null ? Convert.ToInt32("755", 8) : original.Mode,
                     Kind = "file",
                     Owner = original == null ? "未知:未知" : original.Owner,
                     Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
