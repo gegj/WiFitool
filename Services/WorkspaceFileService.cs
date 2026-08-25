@@ -102,12 +102,13 @@ namespace WiFitool.Services
                 var target = Resolve(rootPath, targetVirtual, false);
                 if (Directory.Exists(target)) throw new IOException("目标路径是文件夹，不能上传同名文件。");
                 if (File.Exists(target) && !overwrite) throw new IOException("目标文件已存在，请使用覆盖操作。");
-                Directory.CreateDirectory(Path.GetDirectoryName(target));
-                if (File.Exists(target)) File.SetAttributes(target, FileAttributes.Normal);
-                File.Copy(sourcePath, target, overwrite);
                 var metadata = metadataService.Load(rootPath);
                 WorkspaceMetadata original;
                 metadata.TryGetValue(WorkspaceMetadataService.Normalize(targetVirtual), out original);
+                if (original != null && original.Kind == "symlink") throw new InvalidDataException("目标路径是符号链接，不能直接上传覆盖。请先修改链接目标对应的真实文件。");
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                if (File.Exists(target)) File.SetAttributes(target, FileAttributes.Normal);
+                File.Copy(sourcePath, target, overwrite);
                 metadata[WorkspaceMetadataService.Normalize(targetVirtual)] = new WorkspaceMetadata
                 {
                     Mode = original == null ? Convert.ToInt32("755", 8) : original.Mode,
@@ -172,9 +173,9 @@ namespace WiFitool.Services
             });
         }
 
-        public Task ExportAllAsync(string rootPath, string destination, bool includeEmptyDirectories)
+        public Task ExportAllAsync(string rootPath, string destination, bool includeEmptyDirectories, bool includeSymlinks)
         {
-            return Task.Run(delegate { CopyDirectory(rootPath, destination, includeEmptyDirectories); });
+            return Task.Run(delegate { CopyDirectoryWithMetadata(rootPath, destination, includeEmptyDirectories, includeSymlinks); });
         }
 
         public Task DownloadDirectoryAsync(string rootPath, string virtualPath, string destination)
@@ -250,11 +251,50 @@ namespace WiFitool.Services
         private static Encoding EncodingFor(string name) { if (name == "UTF-16 LE") return new UnicodeEncoding(false, false); if (name == "UTF-16 BE") return new UnicodeEncoding(true, false); if (name == "GB18030") return Encoding.GetEncoding(54936); return new UTF8Encoding(false); }
         private static byte[] Prepend(byte[] prefix, byte[] value) { var result = new byte[prefix.Length + value.Length]; Buffer.BlockCopy(prefix, 0, result, 0, prefix.Length); Buffer.BlockCopy(value, 0, result, prefix.Length, value.Length); return result; }
         private static string NormalizeLineEndings(string text, string lineEnding) { var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n'); if (lineEnding == "CRLF") return normalized.Replace("\n", "\r\n"); if (lineEnding == "CR") return normalized.Replace('\n', '\r'); if (lineEnding == "无换行") return normalized.Replace("\n", ""); return normalized; }
-        private static void CopyDirectory(string source, string destination, bool includeEmptyDirectories)
+        private static void CopyDirectory(string source, string destination, bool includeEmptyDirectories, HashSet<string> excludePaths = null)
         {
             Directory.CreateDirectory(destination);
             if (includeEmptyDirectories) foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories)) if (Path.GetFileName(directory) != ".wifitool.metadata") Directory.CreateDirectory(directory.Replace(source, destination));
-            foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories)) { if (Path.GetFileName(file) == ".wifitool.metadata") continue; var target = file.Replace(source, destination); Directory.CreateDirectory(Path.GetDirectoryName(target)); File.Copy(file, target, true); }
+            foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+            {
+                if (Path.GetFileName(file) == ".wifitool.metadata") continue;
+                if (excludePaths != null && excludePaths.Contains(file)) continue;
+                var target = file.Replace(source, destination);
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                File.Copy(file, target, true);
+            }
+        }
+
+        private void CopyDirectoryWithMetadata(string source, string destination, bool includeEmptyDirectories, bool includeSymlinks)
+        {
+            var metadata = metadataService.Load(source);
+            var symlinkPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in metadata)
+            {
+                if (item.Value == null || item.Value.Kind != "symlink") continue;
+                var relative = item.Key.Trim('/').Replace('/', Path.DirectorySeparatorChar);
+                if (relative.Length == 0) continue;
+                var physical = Path.Combine(source, relative);
+                if (File.Exists(physical) || Directory.Exists(physical)) symlinkPaths.Add(physical);
+            }
+            CopyDirectory(source, destination, includeEmptyDirectories, symlinkPaths);
+            if (!includeSymlinks) return;
+            foreach (var item in metadata)
+            {
+                if (item.Value == null || item.Value.Kind != "symlink") continue;
+                var relative = item.Key.Trim('/').Replace('/', Path.DirectorySeparatorChar);
+                if (relative.Length == 0) continue;
+                var target = Path.Combine(destination, relative);
+                if (Directory.Exists(target)) Directory.Delete(target, true);
+                if (File.Exists(target))
+                {
+                    File.SetAttributes(target, FileAttributes.Normal);
+                    File.Delete(target);
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                var cookie = Encoding.UTF8.GetBytes("WIFITOOL_SYMLINK\n" + (item.Value.Target ?? ""));
+                File.WriteAllBytes(target, cookie);
+            }
         }
     }
 }

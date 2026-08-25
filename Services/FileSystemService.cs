@@ -58,6 +58,7 @@ namespace WiFitool.Services
                 else throw new InvalidOperationException("分区文件系统不支持解包：" + partition.FileSystem);
                 if ((result.ExitCode != 0 && result.ExitCode != 2) || !Directory.Exists(destination)) throw new InvalidDataException("分区解包失败：" + result.StandardError);
                 if (partition.FileSystem == "SquashFS") CreateSquashMetadata(destination, session.MetadataFiles[partition.Name]);
+                NormalizeExtractedSymlinks(destination);
                 session.ExtractedDirectories[partition.Name] = destination;
                 partition.Extracted = true;
             }, token);
@@ -74,7 +75,9 @@ namespace WiFitool.Services
                 if (partition.FileSystem == "SquashFS")
                 {
                     var tool = Path.Combine(toolsRoot, "squashfs", "mksquashfs.exe");
+                    var metadata = metadataService.Load(source);
                     var staging = CreateStagingDirectory(source, Path.Combine(session.RootPath, "repacked"), null);
+                    RemoveStagingSymlinks(staging, metadata);
                     var args = new List<string> { staging, target, "-noappend", "-processors", "1" };
                     if (partition.BlockSize > 0) { args.Add("-b"); args.Add(partition.BlockSize.ToString()); }
                     if (!string.IsNullOrWhiteSpace(partition.Compression) && partition.Compression != "--" && !partition.Compression.StartsWith("未知")) { args.Add("-comp"); args.Add(partition.Compression); }
@@ -166,6 +169,12 @@ namespace WiFitool.Services
                 WorkspaceMetadata entry = null;
                 if (metadata.TryGetValue(path, out entry)) ApplySquashMetadata(fields, entry);
                 if (entry != null && entry.Kind == "symlink" && !string.IsNullOrWhiteSpace(entry.Target)) fields[fields.Length - 1] = entry.Target;
+                if ((fields[1] == "R" || fields[1] == "M"))
+                {
+                    string physical;
+                    if (TryGetStagingPath(staging, fields[0], out physical) && File.Exists(physical))
+                        fields[2] = new DateTimeOffset(File.GetLastWriteTimeUtc(physical)).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+                }
                 existing.Add(path);
                 lines.Add(string.Join("\t", fields));
             }
@@ -330,6 +339,34 @@ namespace WiFitool.Services
                 Directory.CreateDirectory(Path.GetDirectoryName(destinationFile));
                 File.Copy(file, destinationFile, true);
                 if (keepLegacyJffsCookies && IsJffsCookie(file)) try { File.SetAttributes(destinationFile, FileAttributes.System); } catch { }
+            }
+        }
+
+        private static void RemoveStagingSymlinks(string root, Dictionary<string, WorkspaceMetadata> metadata)
+        {
+            foreach (var item in metadata)
+            {
+                if (item.Value == null || item.Value.Kind != "symlink") continue;
+                string path;
+                if (!TryGetStagingPath(root, item.Key, out path)) continue;
+                if (File.Exists(path)) TryDeleteFile(path);
+                else if (Directory.Exists(path)) TryDeleteDirectory(path);
+            }
+        }
+
+        private void NormalizeExtractedSymlinks(string root)
+        {
+            var metadata = metadataService.Load(root);
+            foreach (var item in metadata)
+            {
+                if (item.Value == null || item.Value.Kind != "symlink") continue;
+                string path;
+                if (!TryGetStagingPath(root, item.Key, out path)) continue;
+                if (File.Exists(path)) TryDeleteFile(path);
+                else if (Directory.Exists(path)) TryDeleteDirectory(path);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                var cookie = Encoding.UTF8.GetBytes("WIFITOOL_SYMLINK\n" + (item.Value.Target ?? ""));
+                File.WriteAllBytes(path, cookie);
             }
         }
 

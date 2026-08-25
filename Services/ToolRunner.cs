@@ -15,23 +15,11 @@ namespace WiFitool.Services
         public string StandardError { get; set; }
     }
 
-    internal sealed class ToolBinaryResult
-    {
-        public int ExitCode { get; set; }
-        public byte[] StandardOutput { get; set; }
-        public string StandardError { get; set; }
-    }
-
     internal sealed class ToolRunner
     {
         public Task<ToolResult> RunAsync(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output = null, Encoding textEncoding = null)
         {
             return Task.Run(() => Run(executable, arguments, workingDirectory, token, output, textEncoding), token);
-        }
-
-        public Task<ToolBinaryResult> RunBinaryAsync(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token)
-        {
-            return Task.Run(() => RunBinary(executable, arguments, workingDirectory, token), token);
         }
 
         private static ToolResult Run(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output, Encoding textEncoding)
@@ -79,49 +67,6 @@ namespace WiFitool.Services
                 }
                 process.WaitForExit();
                 return new ToolResult { ExitCode = process.ExitCode, StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
-            }
-        }
-
-        private static ToolBinaryResult RunBinary(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token)
-        {
-            if (!File.Exists(executable)) throw new FileNotFoundException("缺少外部工具：" + Path.GetFileName(executable), executable);
-            var info = new ProcessStartInfo
-            {
-                FileName = executable,
-                Arguments = BuildArguments(arguments),
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-            using (var process = new Process { StartInfo = info })
-            {
-                if (!process.Start()) throw new InvalidOperationException("无法启动工具：" + executable);
-                var stderrTask = Task.Factory.StartNew(() => process.StandardError.ReadToEnd(), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-                using (var output = new MemoryStream())
-                {
-                    var buffer = new byte[1024 * 1024];
-                    try
-                    {
-                        while (true)
-                        {
-                            token.ThrowIfCancellationRequested();
-                            var count = process.StandardOutput.BaseStream.Read(buffer, 0, buffer.Length);
-                            if (count == 0) break;
-                            output.Write(buffer, 0, count);
-                        }
-                        while (!process.WaitForExit(100)) token.ThrowIfCancellationRequested();
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        TryKillTree(process);
-                        throw;
-                    }
-                    var error = stderrTask.Result;
-                    return new ToolBinaryResult { ExitCode = process.ExitCode, StandardOutput = output.ToArray(), StandardError = error };
-                }
             }
         }
 

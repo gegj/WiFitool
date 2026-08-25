@@ -367,19 +367,34 @@ namespace WiFitool.Services
             ValidateSerial(serial);
             if (!File.Exists(localPath)) throw new FileNotFoundException("找不到要上传的本地文件。", localPath);
             var remote = NormalizeRemotePath(virtualPath);
-            var originalMode = await ReadRemoteModeAsync(serial, remote, token);
-            var tempRemote = direct ? remote : CombineRemotePath(ParentRemotePath(remote), ".wifitool-upload-" + Guid.NewGuid().ToString("N"));
+            var target = remote;
+            var attributes = await ReadRemoteAttributesAsync(serial, target, token);
+            if (attributes.Type == 'l')
+            {
+                var resolved = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "readlink -f " + QuoteShellArgument(remote) }, adbDirectory, token, null);
+                if (resolved.ExitCode != 0 || string.IsNullOrWhiteSpace(resolved.StandardOutput)) throw new InvalidOperationException("无法解析符号链接目标：" + resolved.StandardError);
+                target = resolved.StandardOutput.Trim();
+                attributes = await ReadRemoteAttributesAsync(serial, target, token);
+            }
+            if (attributes.Type == 'c' || attributes.Type == 'b' || attributes.Type == 'p' || attributes.Type == 's') throw new InvalidOperationException("目标路径是设备节点或特殊文件，不能上传覆盖。");
+            if (attributes.Type == 'd') throw new InvalidOperationException("目标路径是文件夹，不能上传覆盖。");
+            var tempRemote = direct ? target : CombineRemotePath(ParentRemotePath(target), ".wifitool-upload-" + Guid.NewGuid().ToString("N"));
             try
             {
                 var push = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", localPath, tempRemote }, adbDirectory, token, null);
                 if (push.ExitCode != 0) throw new InvalidOperationException("上传设备文件失败：" + push.StandardError);
                 if (!direct)
                 {
-                    var move = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mv " + QuoteShellArgument(tempRemote) + " " + QuoteShellArgument(remote) }, adbDirectory, token, null);
+                    var move = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mv " + QuoteShellArgument(tempRemote) + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
                     if (move.ExitCode != 0) throw new InvalidOperationException("替换设备文件失败：" + move.StandardError);
                 }
-                var mode = originalMode > 0 ? originalMode : Convert.ToInt32("755", 8);
-                var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod " + Convert.ToString(mode, 8) + " " + QuoteShellArgument(remote) }, adbDirectory, token, null);
+                if (attributes.Type == '-' && attributes.Uid >= 0 && attributes.Gid >= 0)
+                {
+                    var chown = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chown " + attributes.Uid + ":" + attributes.Gid + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
+                    if (chown.ExitCode != 0) throw new InvalidOperationException("设置文件属主失败：" + chown.StandardError);
+                }
+                var mode = attributes.Mode > 0 ? attributes.Mode : Convert.ToInt32("755", 8);
+                var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod " + Convert.ToString(mode, 8) + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
                 if (chmod.ExitCode != 0) throw new InvalidOperationException("设置文件权限失败：" + chmod.StandardError);
             }
             finally
@@ -403,9 +418,19 @@ namespace WiFitool.Services
             ValidateSerial(serial); if (string.IsNullOrWhiteSpace(owner) || owner.IndexOfAny(new[] { ' ', '\t', '\r', '\n' }) >= 0) throw new InvalidOperationException("所有者格式无效。"); var command = "chown " + (recursive ? "-R " : "") + QuoteShellArgument(owner) + " " + QuoteShellArgument(NormalizeRemotePath(virtualPath)); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备所有者失败：" + result.StandardError);
         }
 
-        private async Task<int> ReadRemoteModeAsync(string serial, string virtualPath, CancellationToken token)
+        private async Task<RemoteFileAttributes> ReadRemoteAttributesAsync(string serial, string virtualPath, CancellationToken token)
         {
-            var path = NormalizeRemotePath(virtualPath); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ls -ld " + QuoteShellArgument(path) }, adbDirectory, token, null); if (result.ExitCode != 0) return 0; var line = result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(); if (string.IsNullOrWhiteSpace(line)) return 0; var match = Regex.Match(line.Trim(), @"^([dl-][rwxstST-]{9})"); return match.Success ? ParseMode(match.Groups[1].Value) : 0;
+            var path = NormalizeRemotePath(virtualPath);
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ls -ldn " + QuoteShellArgument(path) }, adbDirectory, token, null);
+            if (result.ExitCode != 0) return new RemoteFileAttributes();
+            var line = result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(line)) return new RemoteFileAttributes();
+            var match = Regex.Match(line.Trim(), @"^([dlcbps-])([rwxstST-]{9})\s+\d+\s+(\d+)\s+(\d+)\s+");
+            if (!match.Success) return new RemoteFileAttributes();
+            int uid, gid;
+            if (!int.TryParse(match.Groups[3].Value, out uid)) uid = -1;
+            if (!int.TryParse(match.Groups[4].Value, out gid)) gid = -1;
+            return new RemoteFileAttributes { Type = match.Groups[1].Value[0], Mode = ParseMode(match.Groups[1].Value + match.Groups[2].Value), Uid = uid, Gid = gid };
         }
 
         public async Task DeleteRemoteAsync(string serial, string virtualPath, bool directory, CancellationToken token)
@@ -448,54 +473,114 @@ namespace WiFitool.Services
         public async Task<string> ExportMtdImageAsync(string serial, string softwareVersion, string folder, CancellationToken token)
         {
             ValidateSerial(serial);
-            var proc = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cat", "/proc/mtd" }, adbDirectory, token, null);
-            if (proc.ExitCode != 0) throw new InvalidOperationException("无法读取设备 /proc/mtd：" + proc.StandardError);
-            var entries = new List<MtdEntry>();
-            foreach (var line in proc.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            var partitions = await ListMtdPartitionsAsync(serial, token);
+            Directory.CreateDirectory(folder);
+            var cleanVersion = CleanFileName(string.IsNullOrWhiteSpace(softwareVersion) ? "未知版本" : softwareVersion);
+            var outputPath = Path.Combine(folder, cleanVersion + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".bin");
+            if (File.Exists(outputPath)) throw new IOException("目标镜像已存在，请先移动或删除该文件：" + outputPath);
+            await ExportMtdPartitionsAsync(serial, partitions, outputPath, token);
+            return outputPath;
+        }
+
+        private async Task<List<MtdEntry>> ListMtdPartitionsAsync(string serial, CancellationToken token)
+        {
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cat", "/proc/mtd" }, adbDirectory, token, null);
+            if (result.ExitCode != 0) throw new InvalidOperationException("无法读取设备 /proc/mtd，请确认 ADB 权限。");
+            var partitions = new List<MtdEntry>();
+            foreach (var line in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                var match = Regex.Match(line.Trim(), @"^mtd(\d+):\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+""([^""]*)"""); if (!match.Success) continue;
-                long size; if (!long.TryParse(match.Groups[2].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out size) || size <= 0) continue;
-                entries.Add(new MtdEntry(int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture), size, match.Groups[4].Value));
+                var match = Regex.Match(line, @"^mtd(\d+):\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+""([^""]+)""");
+                if (!match.Success) continue;
+                long size;
+                int number;
+                if (!int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out number) || !long.TryParse(match.Groups[2].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out size) || size <= 0) continue;
+                partitions.Add(new MtdEntry(number, size));
             }
-            if (entries.Count == 0) throw new InvalidDataException("设备没有可导出的 MTD 分区。");
-            var offsets = new Dictionary<int, long>(); var sequential = 0L;
-            foreach (var entry in entries)
-            {
-                var offsetText = await ReadFirstAsync(serial, new[] { "cat /sys/class/mtd/mtd" + entry.Number + "/offset", "cat /sys/class/mtd/mtd" + entry.Number + "/mtd_offset" }, token);
-                long offset; if (!long.TryParse(offsetText, NumberStyles.Integer, CultureInfo.InvariantCulture, out offset)) offset = sequential; offsets[entry.Number] = offset; sequential = Math.Max(sequential, offset + entry.Size);
-            }
-            var total = entries.Max(x => offsets[x.Number] + x.Size); Directory.CreateDirectory(folder); var cleanVersion = CleanFileName(string.IsNullOrWhiteSpace(softwareVersion) ? "未知版本" : softwareVersion); var outputPath = Path.Combine(folder, cleanVersion + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".bin"); if (File.Exists(outputPath)) throw new IOException("目标镜像已存在，请先移动或删除该文件：" + outputPath); var temp = outputPath + ".wifitool-tmp-" + Guid.NewGuid().ToString("N"); var partTemp = temp + ".part";
+            if (partitions.Count == 0) throw new InvalidDataException("设备没有返回可提取的 MTD 分区。");
+            return partitions;
+        }
+
+        private async Task ExportMtdPartitionsAsync(string serial, List<MtdEntry> partitions, string destinationPath, CancellationToken token)
+        {
+            var temporaryPath = destinationPath + ".wifitool-tmp-" + Guid.NewGuid().ToString("N");
+            var partitionPath = temporaryPath + ".partition";
+            var buffer = Enumerable.Repeat((byte)0xFF, 1024 * 1024).ToArray();
             try
             {
-                using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                var imageSize = partitions.Sum(x => x.Size);
+                using (var output = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length))
                 {
-                    output.SetLength(total); output.Position = 0; var fill = Enumerable.Repeat((byte)0xFF, 1024 * 1024).ToArray(); var transfer = new byte[1024 * 1024]; for (var left = total; left > 0;) { var count = (int)Math.Min(fill.Length, left); output.Write(fill, 0, count); left -= count; }
-                    foreach (var entry in entries)
+                    var remaining = imageSize;
+                    while (remaining > 0)
                     {
-                        try
+                        token.ThrowIfCancellationRequested();
+                        var count = (int)Math.Min(buffer.Length, remaining);
+                        output.Write(buffer, 0, count);
+                        remaining -= count;
+                    }
+                }
+                using (var output = new FileStream(temporaryPath, FileMode.Open, FileAccess.Write, FileShare.None, buffer.Length))
+                {
+                    var transfer = new byte[buffer.Length];
+                    long offset = 0;
+                    foreach (var partition in partitions.OrderBy(x => x.Number))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        await ExtractMtdPartitionAsync(serial, partition, partitionPath, token);
+                        output.Position = offset;
+                        using (var input = new FileStream(partitionPath, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length))
                         {
-                            token.ThrowIfCancellationRequested(); var pull = await runner.RunAsync(adbPath, new[] { "-s", serial, "pull", "/dev/mtd" + entry.Number, partTemp }, adbDirectory, token, null); if (pull.ExitCode != 0) throw new InvalidDataException("下载 MTD mtd" + entry.Number + " 失败：" + pull.StandardError);
-                            using (var input = new FileStream(partTemp, FileMode.Open, FileAccess.Read, FileShare.Read))
+                            var remaining = partition.Size;
+                            while (remaining > 0)
                             {
-                                if (input.Length < entry.Size) throw new InvalidDataException("读取 MTD mtd" + entry.Number + " 数据不完整。"); output.Position = offsets[entry.Number]; for (var left = entry.Size; left > 0;) { var wanted = (int)Math.Min(transfer.Length, left); var read = input.Read(transfer, 0, wanted); if (read <= 0) throw new InvalidDataException("读取 MTD mtd" + entry.Number + " 数据不完整。"); output.Write(transfer, 0, read); left -= read; }
+                                var wanted = (int)Math.Min(transfer.Length, remaining);
+                                var read = input.Read(transfer, 0, wanted);
+                                if (read <= 0) throw new InvalidDataException("读取 MTD mtd" + partition.Number + " 数据不完整。");
+                                output.Write(transfer, 0, read);
+                                remaining -= read;
                             }
                         }
-                        finally
-                        {
-                            try { if (File.Exists(partTemp)) File.Delete(partTemp); } catch { }
-                        }
+                        offset += partition.Size;
+                        TryDeleteFile(partitionPath);
                     }
                     output.Flush(true);
                 }
-                File.Move(temp, outputPath); return outputPath;
+                if (new FileInfo(temporaryPath).Length != imageSize) throw new InvalidDataException("重建后的设备镜像尺寸不正确。");
+                File.Move(temporaryPath, destinationPath);
             }
-            catch { try { if (File.Exists(temp)) File.Delete(temp); } catch { } throw; }
+            finally
+            {
+                TryDeleteFile(partitionPath);
+                TryDeleteFile(temporaryPath);
+            }
         }
 
-        private async Task<string> ReadFirstAsync(string serial, string[] commands, CancellationToken token)
+        private async Task ExtractMtdPartitionAsync(string serial, MtdEntry partition, string destinationPath, CancellationToken token)
         {
-            foreach (var command in commands) { var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); var value = result.StandardOutput.Trim(); if (result.ExitCode == 0 && value.Length > 0) return value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Last().Trim(); }
-            return serial;
+            var temporaryPath = destinationPath + ".wifitool-tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "pull", "/dev/mtd" + partition.Number, temporaryPath }, adbDirectory, token, null);
+                if (result.ExitCode != 0) throw new InvalidDataException("下载 MTD mtd" + partition.Number + " 失败：" + result.StandardError);
+                if (!HasExpectedLength(temporaryPath, partition.Size)) throw new InvalidDataException("读取 MTD mtd" + partition.Number + " 返回 " + FileLength(temporaryPath) + " 字节，预期 " + partition.Size + " 字节。");
+                File.Move(temporaryPath, destinationPath);
+            }
+            finally { TryDeleteFile(temporaryPath); }
+        }
+
+        private static bool HasExpectedLength(string path, long expected)
+        {
+            return File.Exists(path) && new FileInfo(path).Length == expected;
+        }
+
+        private static long FileLength(string path)
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : 0;
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path); } catch { }
         }
 
         private async Task<string> ReadDeviceTypeAsync(string serial, CancellationToken token)
@@ -559,7 +644,20 @@ namespace WiFitool.Services
         }
         private static string FirstCommandToken(string command) { var match = Regex.Match(command ?? "", @"^\s*([^\s]+)"); return match.Success ? match.Groups[1].Value.Trim('"', '\'') : ""; }
         private static List<AdbDeviceLine> ParseDevices(string output) { var list = new List<AdbDeviceLine>(); foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) { if (line.StartsWith("List of devices", StringComparison.OrdinalIgnoreCase)) continue; var parts = Regex.Split(line.Trim(), @"\s+"); if (parts.Length >= 2) { var transport = parts.FirstOrDefault(x => x.StartsWith("transport_id:", StringComparison.OrdinalIgnoreCase)); list.Add(new AdbDeviceLine { Serial = parts[0], State = parts[1], TransportId = transport == null ? "" : transport.Substring("transport_id:".Length) }); } } return list; }
-        private static int ParseMode(string text) { var mode = 0; var values = new[] { 256, 128, 64, 32, 16, 8, 4, 2, 1 }; for (var i = 0; i < Math.Min(9, text.Length - 1); i++) { var c = text[i + 1]; if (c != '-') mode += values[i]; } return mode; }
+        private static int ParseMode(string text)
+        {
+            var mode = 0;
+            var values = new[] { 256, 128, 64, 32, 16, 8, 4, 2, 1 };
+            for (var i = 0; i < Math.Min(9, text.Length - 1); i++)
+            {
+                var c = text[i + 1];
+                if (c == 'r' || c == 'w' || c == 'x' || c == 's' || c == 't') mode += values[i];
+            }
+            if (text.Length > 3 && (text[3] == 's' || text[3] == 'S')) mode += 2048;
+            if (text.Length > 6 && (text[6] == 's' || text[6] == 'S')) mode += 1024;
+            if (text.Length > 9 && (text[9] == 't' || text[9] == 'T')) mode += 512;
+            return mode;
+        }
         private static string QuoteShellArgument(string value) { return "'" + (value ?? "").Replace("'", "'\"'\"'") + "'"; }
         private static string CombineRemotePath(string directory, string name) { var parent = NormalizeRemotePath(directory); return parent == "/" ? "/" + name : parent.TrimEnd('/') + "/" + name; }
         private static string ParentRemotePath(string path) { var normalized = NormalizeRemotePath(path).TrimEnd('/'); var index = normalized.LastIndexOf('/'); return index <= 0 ? "/" : normalized.Substring(0, index); }
@@ -568,7 +666,19 @@ namespace WiFitool.Services
         private static string NormalizeRemotePath(string path) { if (string.IsNullOrWhiteSpace(path)) return "/"; var value = "/" + path.Replace('\\', '/').Trim('/'); if (value.Contains("..")) throw new InvalidOperationException("设备路径包含不允许的内容。"); return value == "/" ? "/" : value; }
         private static void ValidateSerial(string serial) { if (string.IsNullOrWhiteSpace(serial) || serial.IndexOfAny(new[] { ' ', '\t', '\r', '\n', '"', '\'', ';' }) >= 0 || (serial.StartsWith("transport:", StringComparison.OrdinalIgnoreCase) && !Regex.IsMatch(serial.Substring("transport:".Length), @"^\d+$"))) throw new InvalidOperationException("ADB 设备选择器无效。"); }
         private sealed class AdbDeviceLine { public string Serial; public string State; public string TransportId; }
-        private sealed class MtdEntry { public int Number; public long Size; public string Name; public MtdEntry(int number, long size, string name) { Number = number; Size = size; Name = name; } }
+        private sealed class RemoteFileAttributes
+        {
+            public char Type;
+            public int Mode;
+            public int Uid = -1;
+            public int Gid = -1;
+        }
+        private sealed class MtdEntry
+        {
+            public int Number;
+            public long Size;
+            public MtdEntry(int number, long size) { Number = number; Size = size; }
+        }
         private static string CleanFileName(string value) { foreach (var c in Path.GetInvalidFileNameChars()) value = value.Replace(c, '_'); return value; }
     }
 }

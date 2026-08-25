@@ -56,6 +56,7 @@ namespace WiFitool
         private List<WorkspaceEntry> searchResults;
         private readonly DispatcherTimer searchTimer;
         private bool includeEmptyDirectories;
+        private bool includeSymlinks;
         private int activeTaskCount;
 
         public MainWindow()
@@ -624,6 +625,7 @@ namespace WiFitool
         {
             if (adbMode || string.IsNullOrEmpty(currentRoot)) { MessageBox.Show(this, "请先在项目概览中解包并选择分区。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             IncludeEmptyDirectoriesCheckBox.IsChecked = includeEmptyDirectories;
+            IncludeSymlinksCheckBox.IsChecked = includeSymlinks;
             ExportFilesButton.ContextMenu.PlacementTarget = ExportFilesButton;
             ExportFilesButton.ContextMenu.IsOpen = true;
         }
@@ -631,10 +633,12 @@ namespace WiFitool
         private async void ExportFilesMenuExport_Click(object sender, RoutedEventArgs e)
         {
             if (adbMode || string.IsNullOrEmpty(currentRoot)) { MessageBox.Show(this, "请先在项目概览中解包并选择分区。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            string folder; if (!FolderDialog.TrySelect(this, "选择导出目录", out folder)) return; var target = CreateExportFolder(folder, Path.GetFileNameWithoutExtension(image.Name)); try { await RunTaskProgressAsync(async () => { Directory.CreateDirectory(target); await fileService.ExportAllAsync(currentRoot, target, includeEmptyDirectories); }); StatusText.Text = "系统文件导出完成"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+            string folder; if (!FolderDialog.TrySelect(this, "选择导出目录", out folder)) return; var target = CreateExportFolder(folder, Path.GetFileNameWithoutExtension(image.Name)); try { await RunTaskProgressAsync(async () => { Directory.CreateDirectory(target); await fileService.ExportAllAsync(currentRoot, target, includeEmptyDirectories, includeSymlinks); }); StatusText.Text = "系统文件导出完成"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Error); }
         }
         private void IncludeEmptyDirectoriesCheckBox_Checked(object sender, RoutedEventArgs e) { includeEmptyDirectories = true; }
         private void IncludeEmptyDirectoriesCheckBox_Unchecked(object sender, RoutedEventArgs e) { includeEmptyDirectories = false; }
+        private void IncludeSymlinksCheckBox_Checked(object sender, RoutedEventArgs e) { includeSymlinks = true; }
+        private void IncludeSymlinksCheckBox_Unchecked(object sender, RoutedEventArgs e) { includeSymlinks = false; }
         private async void AdbdButton_Click(object sender, RoutedEventArgs e) { if (adbMode || selectedPartition == null || workspace == null) return; try { await RunTaskProgressAsync(() => rootfsFeatureService.ApplyAdbdAsync(selectedPartition, workspace)); StatusText.Text = "adbd 已固化"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "固化 adbd 失败", MessageBoxButton.OK, MessageBoxImage.Error); } }
         private async void AtWebButton_Click(object sender, RoutedEventArgs e) { if (adbMode || selectedPartition == null || workspace == null) return; try { await RunTaskProgressAsync(() => rootfsFeatureService.ApplyAtWebAsync(selectedPartition, workspace)); StatusText.Text = "ATWeb 已添加"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "添加 ATWeb 失败", MessageBoxButton.OK, MessageBoxImage.Error); } }
         private async void RefreshProcessButton_Click(object sender, RoutedEventArgs e)
