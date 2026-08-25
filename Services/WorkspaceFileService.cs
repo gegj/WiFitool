@@ -138,6 +138,39 @@ namespace WiFitool.Services
             });
         }
 
+        public Task RenameAsync(string rootPath, string virtualPath, string newName)
+        {
+            return Task.Run(delegate
+            {
+                if (string.IsNullOrWhiteSpace(newName) || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || newName == "." || newName == "..") throw new InvalidDataException("名称无效。");
+                var normalized = WorkspaceMetadataService.Normalize(virtualPath);
+                if (normalized == "/") throw new InvalidDataException("根目录不能重命名。");
+                var targetVirtual = Combine(ParentVirtual(normalized), newName);
+                var targetNormalized = WorkspaceMetadataService.Normalize(targetVirtual);
+                var metadata = metadataService.Load(rootPath);
+                var physical = Resolve(rootPath, virtualPath, false);
+                if (File.Exists(physical) || Directory.Exists(physical))
+                {
+                    var destination = Resolve(rootPath, targetVirtual, false);
+                    if (File.Exists(destination) || Directory.Exists(destination)) throw new IOException("目标已存在同名文件或目录：" + newName);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                    if (Directory.Exists(physical)) Directory.Move(physical, destination);
+                    else { File.SetAttributes(physical, FileAttributes.Normal); File.Move(physical, destination); }
+                }
+                else if (!metadata.ContainsKey(normalized)) throw new FileNotFoundException("路径不存在。", physical);
+
+                var oldPrefix = normalized.TrimEnd('/') + "/";
+                var targetPrefix = targetNormalized.TrimEnd('/') + "/";
+                foreach (var key in metadata.Keys.Where(x => x.Equals(normalized, StringComparison.OrdinalIgnoreCase) || x.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase)).ToList())
+                {
+                    var value = metadata[key];
+                    metadata.Remove(key);
+                    metadata[key.Equals(normalized, StringComparison.OrdinalIgnoreCase) ? targetNormalized : targetPrefix + key.Substring(oldPrefix.Length)] = value;
+                }
+                metadataService.Save(rootPath, metadata);
+            });
+        }
+
         public Task ExportAllAsync(string rootPath, string destination, bool includeEmptyDirectories)
         {
             return Task.Run(delegate { CopyDirectory(rootPath, destination, includeEmptyDirectories); });
@@ -173,6 +206,7 @@ namespace WiFitool.Services
         }
 
         private static string Combine(string directory, string name) { return directory == "/" ? "/" + name : directory.TrimEnd('/') + "/" + name; }
+        private static string ParentVirtual(string path) { var normalized = (path ?? "/").TrimEnd('/'); var index = normalized.LastIndexOf('/'); return index <= 0 ? "/" : normalized.Substring(0, index); }
         private static bool IsDirectChild(string path, string parent)
         {
             if (parent == "/") return path.Length > 1 && path.IndexOf('/', 1) < 0;

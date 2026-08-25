@@ -408,6 +408,14 @@ namespace WiFitool.Services
             ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "rm", directory ? "-rf" : "-f", path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("删除设备文件失败：" + result.StandardError);
         }
 
+        public async Task RenameAsync(string serial, string virtualPath, string newName, CancellationToken token)
+        {
+            ValidateSerial(serial); if (string.IsNullOrWhiteSpace(newName) || newName.IndexOfAny(new[] { '/', '\\', '\r', '\n' }) >= 0 || newName == "." || newName == "..") throw new InvalidOperationException("名称无效。");
+            var oldPath = NormalizeRemotePath(virtualPath); var newPath = CombineRemotePath(ParentRemotePath(oldPath), newName);
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mv " + QuoteShellArgument(oldPath) + " " + QuoteShellArgument(newPath) }, adbDirectory, token, null);
+            if (result.ExitCode != 0) throw new InvalidOperationException("重命名失败：" + result.StandardError);
+        }
+
         public async Task DownloadFileAsync(string serial, string virtualPath, string localPath, CancellationToken token)
         {
             ValidateSerial(serial); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "pull", NormalizeRemotePath(virtualPath), localPath }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("下载设备文件失败：" + result.StandardError);

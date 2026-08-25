@@ -772,16 +772,40 @@ namespace WiFitool
 
         private ContextMenu CreateFileMenu()
         {
-            var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
+            var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var rename = new MenuItem { Header = "重命名" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
             edit.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && entry.Kind != "目录" && entry.Kind != "符号链接") { if (adbMode) await EditAdbFileAsync(entry); else FileGrid_MouseDoubleClick(null, null); } };
             permissions.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null || entry.Kind == "符号链接") return; var dialog = new PermissionWindow(entry); dialog.Owner = this; if (adbMode) { if (dialog.ShowDialog() == true) { try { await RunTaskProgressAsync(async () => { await adbService.SetModeAsync(adbSerial, entry.Path, dialog.Mode, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "权限", MessageBoxButton.OK, MessageBoxImage.Error); } } } else if (dialog.ShowDialog() == true) { try { await RunTaskProgressAsync(() => Task.Run(() => fileService.SetPermissions(currentRoot, entry.Path, dialog.Mode, dialog.OwnerValue))); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "权限", MessageBoxButton.OK, MessageBoxImage.Error); } } };
+            rename.Click += async delegate
+            {
+                var entry = FileGrid.SelectedItem as WorkspaceEntry;
+                if (entry == null || entry.Path == "/") return;
+                var name = Prompt("重命名", "新名称：");
+                if (string.IsNullOrWhiteSpace(name)) return;
+                try
+                {
+                    if (adbMode)
+                    {
+                        await RunTaskProgressAsync(async () => { await adbService.RenameAsync(adbSerial, entry.Path, name, CancellationToken.None); await LoadAdbFilesAsyncTask(); });
+                    }
+                    else
+                    {
+                        await RunTaskProgressAsync(() => fileService.RenameAsync(currentRoot, entry.Path, name));
+                        var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName);
+                        if (p != null) p.Modified = true;
+                        LoadFiles();
+                    }
+                    StatusText.Text = "已重命名：" + name;
+                }
+                catch (Exception ex) { MessageBox.Show(this, ex.Message, "重命名失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+            };
             uploadNew.Click += async delegate { var directory = GetUploadDirectory(); var dialog = new OpenFileDialog { Title = "选择要上传的文件" }; if (dialog.ShowDialog() == true) await UploadSourcesAsync(new[] { dialog.FileName }, directory); };
             uploadFolder.Click += async delegate { var directory = GetUploadDirectory(); string folder; if (FolderDialog.TrySelect(this, "选择要上传的文件夹", out folder)) await UploadSourcesAsync(new[] { folder }, directory); };
             newDirectory.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; var directory = entry == null ? currentDirectory : entry.Kind == "目录" ? entry.Path : currentDirectory; var name = Prompt("新建目录", "目录名称："); if (string.IsNullOrWhiteSpace(name)) return; try { if (adbMode) { if (MessageBox.Show(this, "确认在设备目录创建：" + directory + "/" + name + "？", "确认创建", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; await RunTaskProgressAsync(async () => { await adbService.CreateDirectoryAsync(adbSerial, directory, name, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.CreateDirectoryAsync(currentRoot, directory, name)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "创建目录失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
             download.Click += async delegate { await DownloadEntryAsync(FileGrid.SelectedItem as WorkspaceEntry); };
             delete.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null) return; if (MessageBox.Show(this, "确认删除：" + entry.Path + "？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; try { if (adbMode) { await RunTaskProgressAsync(async () => { await adbService.DeleteRemoteAsync(adbSerial, entry.Path, entry.Kind == "目录", CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.DeleteAsync(currentRoot, entry.Path)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "删除失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
             refresh.Click += async delegate { if (adbMode) await LoadAdbFilesAsyncTask(); else LoadFiles(); };
-            menu.Items.Add(refresh); menu.Items.Add(edit); menu.Items.Add(permissions); menu.Items.Add(uploadNew); menu.Items.Add(uploadFolder); menu.Items.Add(newDirectory); menu.Items.Add(download); menu.Items.Add(delete); return menu;
+            menu.Opened += delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; edit.Visibility = entry != null && entry.Kind != "目录" && entry.Kind != "符号链接" ? Visibility.Visible : Visibility.Collapsed; };
+            menu.Items.Add(refresh); menu.Items.Add(edit); menu.Items.Add(permissions); menu.Items.Add(rename); menu.Items.Add(uploadNew); menu.Items.Add(uploadFolder); menu.Items.Add(newDirectory); menu.Items.Add(download); menu.Items.Add(delete); return menu;
         }
 
         private void FileGrid_PreviewDragOver(object sender, DragEventArgs e)
