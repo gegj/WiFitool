@@ -353,6 +353,32 @@
       <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="FontSize" Value="13" />
     </Style>
+    <Style x:Key="PermissionCheckBoxStyle" TargetType="CheckBox">
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <StackPanel Orientation="Horizontal">
+              <Border x:Name="CheckBoxBorder" Width="15" Height="15" CornerRadius="3" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" VerticalAlignment="Center">
+                <TextBlock x:Name="CheckMark" Text="✓" Foreground="White" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+              </Border>
+              <ContentPresenter Margin="7,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="CheckBoxBorder" Property="Background" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style TargetType="ListBox">
       <Setter Property="Background" Value="{DynamicResource PanelAltBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />

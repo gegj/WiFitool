@@ -119,7 +119,7 @@ namespace WiFitool
             var checkGrid = new UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 0) };
             for (var i = 0; i < checks.Length; i++)
             {
-                var box = new CheckBox { Content = labels[i], Margin = new Thickness(0, 3, 8, 3) };
+                var box = new CheckBox { Content = labels[i], Margin = new Thickness(0, 3, 8, 3), Style = (Style)Application.Current.FindResource("PermissionCheckBoxStyle") };
                 checks[i] = box;
                 box.Checked += delegate { SyncOctalFromChecks(); };
                 box.Unchecked += delegate { SyncOctalFromChecks(); };
