@@ -527,6 +527,27 @@ namespace WiFitool.Services
             var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "df", "-k" }, adbDirectory, token, null); var list = new List<AdbPartitionSpace>(); foreach (var line in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) { var m = Regex.Match(line.Trim(), @"^\S+\s+(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s+(.+)$"); if (m.Success) list.Add(new AdbPartitionSpace { TotalBytes = long.Parse(m.Groups[1].Value) * 1024, UsedBytes = long.Parse(m.Groups[2].Value) * 1024, FreeBytes = long.Parse(m.Groups[3].Value) * 1024, Mount = m.Groups[4].Value.Trim() }); } return list;
         }
 
+        public async Task<List<WorkspaceEntry>> SearchFilesAsync(string serial, string keyword, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var pattern = QuoteShellArgument("*" + keyword + "*");
+            var prune = "\\( -name proc -o -name sys -o -name dev \\) -prune -o";
+            var dirs = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "find / " + prune + " -type d -iname " + pattern + " -print 2>/dev/null | head -n 500" }, adbDirectory, token, null);
+            var files = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "find / " + prune + " -type f -iname " + pattern + " -print 2>/dev/null | head -n 500" }, adbDirectory, token, null);
+            var result = new List<WorkspaceEntry>();
+            foreach (var line in dirs.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var path = line.Trim();
+                if (path.Length > 0) result.Add(new WorkspaceEntry { Name = path, Path = path, Kind = "目录", UnixModeText = "d--------", Owner = "未知:未知" });
+            }
+            foreach (var line in files.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var path = line.Trim();
+                if (path.Length > 0) result.Add(new WorkspaceEntry { Name = path, Path = path, Kind = "文件", UnixModeText = "----------", Owner = "未知:未知" });
+            }
+            return result;
+        }
+
         private static ProcessInfo ParseProcess(string line)
         {
             var text = Regex.Replace(line.Trim(), "\\x1B\\[[0-9;]*[A-Za-z]", ""); if (!char.IsDigit(text.Length == 0 ? ' ' : text[0])) return null; var parts = Regex.Split(text, @"\s+"); if (parts.Length < 4) return null; int pid; if (!int.TryParse(parts[0], out pid)) return null;

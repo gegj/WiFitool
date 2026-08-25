@@ -52,6 +52,9 @@ namespace WiFitool
         private bool compactContentMargin;
         private bool updateChecking;
         private bool toolEnvironmentChecking;
+        private string fileSearchKeyword;
+        private List<WorkspaceEntry> searchResults;
+        private readonly DispatcherTimer searchTimer;
         private bool includeEmptyDirectories;
         private int activeTaskCount;
 
@@ -64,6 +67,8 @@ namespace WiFitool
             workspaceService.CleanupStaleWorkspaces();
             adbTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             adbTimer.Tick += async delegate { await CheckAdbStatusAsync(); };
+            searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            searchTimer.Tick += async delegate { await ExecuteFileSearchAsync(); };
             FileGrid.ItemsSource = files;
             SizeChanged += MainWindow_SizeChanged;
             Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
@@ -365,8 +370,67 @@ namespace WiFitool
 
         private void LoadFiles()
         {
+            ClearFileSearch();
             files.Clear(); if (string.IsNullOrEmpty(currentRoot)) { ShowBreadcrumbMessage("未选择已解包分区"); UpdateFileSourceButtons(); return; }
             try { foreach (var entry in fileService.ListDirectory(currentRoot, currentDirectory)) files.Add(entry); UpdateBreadcrumb(); StatusText.Text = selectedPartitionName + " " + currentDirectory; UpdateFileSourceButtons(); } catch (Exception ex) { StatusText.Text = "读取目录失败：" + ex.Message; }
+        }
+
+        private void FileSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            fileSearchKeyword = FileSearchBox.Text.Trim();
+            FileSearchHint.Visibility = string.IsNullOrEmpty(fileSearchKeyword) ? Visibility.Visible : Visibility.Collapsed;
+            FileSearchClearButton.Visibility = string.IsNullOrEmpty(fileSearchKeyword) ? Visibility.Collapsed : Visibility.Visible;
+            searchTimer.Stop();
+            searchTimer.Start();
+        }
+
+        private void FileSearchClearButton_Click(object sender, RoutedEventArgs e)
+        {
+            FileSearchBox.Clear();
+            FileSearchBox.Focus();
+        }
+
+        private void FileSearchBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                FileSearchBox.Clear();
+                e.Handled = true;
+            }
+        }
+
+        private void ClearFileSearch()
+        {
+            searchTimer.Stop();
+            if (FileSearchBox.Text.Length > 0) FileSearchBox.Text = "";
+            if (FileGrid.ItemsSource != files) FileGrid.ItemsSource = files;
+        }
+
+        private async Task ExecuteFileSearchAsync()
+        {
+            searchTimer.Stop();
+            if (string.IsNullOrEmpty(fileSearchKeyword))
+            {
+                FileGrid.ItemsSource = files;
+                return;
+            }
+            BeginTaskProgress();
+            try
+            {
+                if (adbMode)
+                {
+                    if (adbStatus.DeviceState != "online" || string.IsNullOrWhiteSpace(adbSerial)) return;
+                    searchResults = await adbService.SearchFilesAsync(adbSerial, fileSearchKeyword, CancellationToken.None);
+                    FileGrid.ItemsSource = searchResults;
+                }
+                else if (!string.IsNullOrEmpty(currentRoot))
+                {
+                    searchResults = await Task.Run(() => fileService.SearchFiles(currentRoot, fileSearchKeyword));
+                    FileGrid.ItemsSource = searchResults;
+                }
+            }
+            catch (Exception ex) { StatusText.Text = "搜索失败：" + ex.Message; }
+            finally { EndTaskProgress(); }
         }
 
         private async void FileGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -1085,6 +1149,7 @@ namespace WiFitool
 
         private async Task LoadAdbFilesAsyncTask(bool showProgress = true)
         {
+            ClearFileSearch();
             if (!adbMode || adbStatus.DeviceState != "online" || string.IsNullOrWhiteSpace(adbSerial)) return;
             var path = currentDirectory;
             if (showProgress) BeginTaskProgress();

@@ -187,6 +187,23 @@ namespace WiFitool.Services
             });
         }
 
+        public List<WorkspaceEntry> SearchFiles(string rootPath, string keyword)
+        {
+            var root = Resolve(rootPath, "/", false);
+            var list = new List<WorkspaceEntry>();
+            foreach (var path in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories))
+            {
+                if (Path.GetFileName(path).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase)) continue;
+                var name = Path.GetFileName(path);
+                if (name.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                var relative = path.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var virtualPath = "/" + relative.Replace(Path.DirectorySeparatorChar, '/');
+                var isDirectory = Directory.Exists(path);
+                list.Add(new WorkspaceEntry { Name = virtualPath, Path = virtualPath, Kind = isDirectory ? "目录" : "文件", UnixModeText = isDirectory ? "d--------" : "----------", Owner = "未知:未知", Modified = isDirectory ? "" : File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm:ss") });
+            }
+            return list;
+        }
+
         public void SetPermissions(string rootPath, string virtualPath, int mode, string owner, bool recursive)
         {
             var metadata = metadataService.Load(rootPath); WorkspaceMetadata saved;
