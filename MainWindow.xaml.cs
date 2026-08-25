@@ -374,7 +374,7 @@ namespace WiFitool
             var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null) return;
             if (entry.Kind == "目录") { currentDirectory = entry.Path; if (adbMode) await LoadAdbFilesAsyncTask(); else LoadFiles(); return; }
             if (adbMode) { await EditAdbFileAsync(entry); return; }
-            try { var data = fileService.ReadText(currentRoot, entry.Path); var editor = new TextEditorWindow(entry.Name, data); if (editor.ShowDialog() == true) { await RunTaskProgressAsync(() => fileService.SaveTextAsync(currentRoot, entry.Path, data, editor.EditorText)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); StatusText.Text = "已保存：" + entry.Path; } }
+            try { var data = fileService.ReadText(currentRoot, entry.Path); var editor = new TextEditorWindow(entry.Name, data); if (editor.ShowDialog() == true) { data.EncodingName = editor.SelectedEncodingName; data.LineEnding = editor.SelectedLineEnding; await RunTaskProgressAsync(() => fileService.SaveTextAsync(currentRoot, entry.Path, data, editor.EditorText)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); StatusText.Text = "已保存：" + entry.Path; } }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "无法编辑", MessageBoxButton.OK, MessageBoxImage.Information); }
         }
 
@@ -1106,12 +1106,13 @@ namespace WiFitool
                 TextFileData data;
                 try { data = fileService.ReadText(Path.GetDirectoryName(temp), "/" + Path.GetFileName(temp)); }
                 finally { try { File.Delete(temp); } catch { } }
+                data.RawBytes = bytes;
                 var editor = new TextEditorWindow(path, data, lineNumber);
                 if (editor.ShowDialog() != true) return;
-                var encoding = EncodingForName(data.EncodingName);
-                var normalized = NormalizeLineEndings(editor.EditorText, data.LineEnding);
+                var encoding = EncodingForName(editor.SelectedEncodingName);
+                var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding);
                 var updated = encoding.GetBytes(normalized);
-                if (data.EncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated);
+                if (editor.SelectedEncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated);
                 if (MessageBox.Show(this, "确认应用到设备：" + path + "？", "应用设备文件", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
                     await RunTaskProgressAsync(async () => { await adbService.WriteFileAsync(adbSerial, path, updated, CancellationToken.None); await LoadAdbFilesAsyncTask(); });
@@ -1142,7 +1143,7 @@ namespace WiFitool
                             try
                             {
                                 var bytes = await adbService.ReadFileAsync(adbSerial, hostsPath, CancellationToken.None);
-                                data = new TextFileData { Text = System.Text.Encoding.UTF8.GetString(bytes), EncodingName = "UTF-8", LineEnding = "LF" };
+                                data = new TextFileData { Text = System.Text.Encoding.UTF8.GetString(bytes), EncodingName = "UTF-8", LineEnding = "LF", RawBytes = bytes };
                             }
                             catch (Exception ex)
                             {
@@ -1158,13 +1159,13 @@ namespace WiFitool
                             data = new TextFileData { Text = "", EncodingName = "UTF-8", LineEnding = "LF" };
                         }
                     });
-                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true && MessageBox.Show(this, "确认应用 /etc/hosts 到设备？", "Hosts", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { await RunTaskProgressAsync(async () => { await adbService.CreateFileAsync(adbSerial, hostsPath, System.Text.Encoding.UTF8.GetBytes(editor.EditorText), CancellationToken.None); await LoadAdbFilesAsyncTask(); }); }
+                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true && MessageBox.Show(this, "确认应用 /etc/hosts 到设备？", "Hosts", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { await RunTaskProgressAsync(async () => { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var updated = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated); await adbService.CreateFileAsync(adbSerial, hostsPath, updated, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); }
                 }
                 else
                 {
                     if (string.IsNullOrEmpty(currentRoot)) { MessageBox.Show(this, "请先在项目概览中解包并选择分区。", "Hosts", MessageBoxButton.OK, MessageBoxImage.Information); return; }
                     TextFileData data; try { data = fileService.ReadText(currentRoot, hostsPath); } catch { data = new TextFileData { Text = "", EncodingName = "UTF-8", LineEnding = "LF" }; }
-                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true) { await RunTaskProgressAsync(async () => { var path = fileService.Resolve(currentRoot, hostsPath, false); Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) await fileService.SaveTextAsync(currentRoot, hostsPath, data, editor.EditorText); else { File.WriteAllText(path, editor.EditorText, System.Text.Encoding.UTF8); new WorkspaceMetadataService().Update(currentRoot, hostsPath, new WorkspaceMetadata { Kind = "file", Mode = Convert.ToInt32("644", 8), Owner = "0:0", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); } }); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); }
+                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true) { data.EncodingName = editor.SelectedEncodingName; data.LineEnding = editor.SelectedLineEnding; await RunTaskProgressAsync(async () => { var path = fileService.Resolve(currentRoot, hostsPath, false); Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) await fileService.SaveTextAsync(currentRoot, hostsPath, data, editor.EditorText); else { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var bytes = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") bytes = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, bytes); File.WriteAllBytes(path, bytes); new WorkspaceMetadataService().Update(currentRoot, hostsPath, new WorkspaceMetadata { Kind = "file", Mode = Convert.ToInt32("644", 8), Owner = "0:0", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); } }); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); }
                 }
             }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "Hosts 管理失败", MessageBoxButton.OK, MessageBoxImage.Error); }

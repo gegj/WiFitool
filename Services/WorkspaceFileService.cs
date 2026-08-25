@@ -13,6 +13,7 @@ namespace WiFitool.Services
         public string Text { get; set; }
         public string EncodingName { get; set; }
         public string LineEnding { get; set; }
+        public byte[] RawBytes { get; set; }
     }
 
     internal sealed class WorkspaceFileService
@@ -66,7 +67,7 @@ namespace WiFitool.Services
             try { text = encoding.GetString(bytes, skip, bytes.Length - skip); }
             catch (DecoderFallbackException) { encoding = Encoding.GetEncoding(54936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback); name = "GB18030"; text = encoding.GetString(bytes); }
             if ((name != "UTF-16 LE" && name != "UTF-16 BE" && bytes.Any(c => c == 0)) || text.Any(c => char.IsControl(c) && c != '\r' && c != '\n' && c != '\t' && c != '\f')) throw new InvalidDataException("该文件被识别为二进制，不能使用文本编辑器打开。");
-            return new TextFileData { Text = text, EncodingName = name, LineEnding = text.Contains("\r\n") ? "CRLF" : text.Contains('\n') ? "LF" : text.Contains('\r') ? "CR" : "无换行" };
+            return new TextFileData { Text = text, EncodingName = name, LineEnding = text.Contains("\r\n") ? "CRLF" : text.Contains('\n') ? "LF" : text.Contains('\r') ? "CR" : "无换行", RawBytes = bytes };
         }
 
         public Task SaveTextAsync(string rootPath, string virtualPath, TextFileData original, string text)

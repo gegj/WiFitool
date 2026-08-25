@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -9,10 +10,16 @@ namespace WiFitool
 {
     internal sealed class TextEditorWindow : Window
     {
+        private readonly TextFileData data;
         private readonly TextBox textBox;
+        private readonly ComboBox encodingCombo;
+        private readonly ComboBox lineEndingCombo;
+        private readonly TextBlock positionText;
         private string findKeyword;
         private bool findCaseSensitive;
         public string EditorText { get { return textBox.Text; } }
+        public string SelectedEncodingName { get { return encodingCombo.SelectedItem as string; } }
+        public string SelectedLineEnding { get { return lineEndingCombo.SelectedItem as string; } }
         public TextEditorWindow(string name, TextFileData data)
             : this(name, data, 0)
         {
@@ -20,6 +27,7 @@ namespace WiFitool
 
         public TextEditorWindow(string name, TextFileData data, int lineNumber)
         {
+            this.data = data;
             Title = "编辑：" + name;
             Width = 900;
             Height = 700;
@@ -81,7 +89,10 @@ namespace WiFitool
             Grid.SetRow(header, 0);
             root.Children.Add(header);
 
-            var panel = new DockPanel();
+            var panel = new Grid();
+            panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             textBox = new TextBox
             {
                 Text = data.Text,
@@ -98,6 +109,39 @@ namespace WiFitool
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(10, 8, 10, 8)
             };
+            Grid.SetRow(textBox, 0);
+            panel.Children.Add(textBox);
+
+            var statusBar = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+            statusBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            statusBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            statusBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var encodingPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            encodingPanel.Children.Add(new TextBlock { Text = "编码", FontSize = 12, Foreground = GetBrush("MutedBrush", Color.FromRgb(154, 170, 192)), VerticalAlignment = VerticalAlignment.Center });
+            encodingCombo = new ComboBox { Width = 118, Margin = new Thickness(6, 0, 16, 0), FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var item in new[] { "UTF-8", "UTF-8 BOM", "UTF-16 LE", "UTF-16 BE", "GB18030" }) encodingCombo.Items.Add(item);
+            encodingCombo.SelectedItem = data.EncodingName;
+            encodingCombo.SelectionChanged += delegate { ReopenWithEncoding(); };
+            encodingPanel.Children.Add(encodingCombo);
+            Grid.SetColumn(encodingPanel, 0);
+            statusBar.Children.Add(encodingPanel);
+
+            var lineEndingPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            lineEndingPanel.Children.Add(new TextBlock { Text = "换行符", FontSize = 12, Foreground = GetBrush("MutedBrush", Color.FromRgb(154, 170, 192)), VerticalAlignment = VerticalAlignment.Center });
+            lineEndingCombo = new ComboBox { Width = 96, Margin = new Thickness(6, 0, 0, 0), FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var item in new[] { "LF", "CRLF", "CR", "无换行" }) lineEndingCombo.Items.Add(item);
+            lineEndingCombo.SelectedItem = data.LineEnding;
+            lineEndingPanel.Children.Add(lineEndingCombo);
+            Grid.SetColumn(lineEndingPanel, 1);
+            statusBar.Children.Add(lineEndingPanel);
+
+            positionText = new TextBlock { Text = "行 1 列 1", FontSize = 12, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Foreground = GetBrush("MutedBrush", Color.FromRgb(154, 170, 192)) };
+            Grid.SetColumn(positionText, 2);
+            statusBar.Children.Add(positionText);
+            Grid.SetRow(statusBar, 1);
+            panel.Children.Add(statusBar);
+            textBox.SelectionChanged += delegate { UpdatePosition(); };
+
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
             var find = new Button { Content = "查找", MinWidth = 74, Margin = new Thickness(0, 0, 8, 0) };
             var save = new Button { Content = "保存", MinWidth = 74, IsDefault = true, Margin = new Thickness(0, 0, 8, 0), Background = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)), Foreground = Brushes.White, BorderBrush = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)) };
@@ -105,15 +149,14 @@ namespace WiFitool
             find.Click += delegate { BeginFind(); };
             save.Click += delegate { DialogResult = true; Close(); };
             buttons.Children.Add(find); buttons.Children.Add(save); buttons.Children.Add(cancel);
-            DockPanel.SetDock(buttons, Dock.Bottom);
+            Grid.SetRow(buttons, 2);
             panel.Children.Add(buttons);
-            panel.Children.Add(textBox);
             Grid.SetRow(panel, 1);
             root.Children.Add(panel);
 
             border.Child = root;
             Content = border;
-            Loaded += delegate { textBox.Focus(); if (lineNumber > 0) SelectLine(lineNumber); };
+            Loaded += delegate { textBox.Focus(); UpdatePosition(); if (lineNumber > 0) SelectLine(lineNumber); };
             KeyDown += TextEditorWindow_KeyDown;
         }
 
@@ -126,6 +169,40 @@ namespace WiFitool
             while (end > start && (textBox.Text[end - 1] == '\r' || textBox.Text[end - 1] == '\n')) end--;
             textBox.Select(start, Math.Max(0, end - start));
             textBox.ScrollToLine(lineIndex);
+        }
+
+        private void UpdatePosition()
+        {
+            var line = textBox.GetLineIndexFromCharacterIndex(Math.Max(0, textBox.SelectionStart)) + 1;
+            var lineStart = textBox.GetCharacterIndexFromLineIndex(line - 1);
+            var column = textBox.SelectionStart - lineStart + 1;
+            positionText.Text = "行 " + line + " 列 " + column;
+        }
+
+        private void ReopenWithEncoding()
+        {
+            if (data == null || data.RawBytes == null) return;
+            var encodingName = encodingCombo.SelectedItem as string;
+            if (string.IsNullOrEmpty(encodingName)) return;
+            try
+            {
+                textBox.Text = DecodeBytes(data.RawBytes, encodingName);
+                UpdatePosition();
+            }
+            catch (Exception ex) { MessageBox.Show(this, "按所选编码打开失败：" + ex.Message, "编码", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        }
+
+        private static string DecodeBytes(byte[] bytes, string encodingName)
+        {
+            if (encodingName == "UTF-8 BOM")
+            {
+                var start = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+                return new UTF8Encoding(false, true).GetString(bytes, start, bytes.Length - start);
+            }
+            if (encodingName == "UTF-16 LE") return new UnicodeEncoding(false, false, true).GetString(bytes);
+            if (encodingName == "UTF-16 BE") return new UnicodeEncoding(true, false, true).GetString(bytes);
+            if (encodingName == "GB18030") return Encoding.GetEncoding(54936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback).GetString(bytes);
+            return new UTF8Encoding(false, true).GetString(bytes);
         }
 
         private void TextEditorWindow_KeyDown(object sender, KeyEventArgs e)
