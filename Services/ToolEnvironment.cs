@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 
 namespace WiFitool.Services
@@ -12,6 +13,7 @@ namespace WiFitool.Services
         // 工具包下载地址；主地址失败时使用兜底地址。
         private const string PrimaryDownloadUrl = "https://ilz.ly93.cc/531/39090988540/tools.zip";
         private const string FallbackDownloadUrl = "https://github.com/gegj/WiFitool/raw/refs/heads/main/tools.zip";
+        private const string ToolsPackageSha256 = "5BD9496B631AAF490B58992DCE8940D7447986CFAC96BD084AF42C4D5BAFB72D";
 
         private static readonly string[] requiredFiles =
         {
@@ -81,6 +83,7 @@ namespace WiFitool.Services
                     }
                 }
                 if (progress != null) progress.Report(100);
+                if (!VerifyPackageHash(zipPath)) throw new InvalidOperationException("工具包校验失败，已拒绝使用该文件。");
                 ZipFile.ExtractToDirectory(zipPath, extractDir);
                 var nested = Path.Combine(extractDir, "tools");
                 var sourceDir = Directory.Exists(nested) ? nested : extractDir;
@@ -100,6 +103,16 @@ namespace WiFitool.Services
             var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("WiFitool", "1.0"));
             return httpClient;
+        }
+
+        private static bool VerifyPackageHash(string path)
+        {
+            using (var sha256 = SHA256.Create())
+            using (var stream = File.OpenRead(path))
+            {
+                var hash = BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", "");
+                return string.Equals(hash, ToolsPackageSha256, StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         private static void TryDeleteDirectory(string path)
