@@ -354,7 +354,7 @@ namespace WiFitool.Services
 
         public async Task CreateFileAsync(string serial, string virtualPath, byte[] bytes, CancellationToken token)
         {
-            ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var tempDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Temp"); Directory.CreateDirectory(tempDirectory); var local = Path.Combine(tempDirectory, "adb-hosts-" + Guid.NewGuid().ToString("N")); try { File.WriteAllBytes(local, bytes); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", local, path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备文件失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod", "0644", path }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置 hosts 权限失败：" + chmod.StandardError); } finally { try { if (File.Exists(local)) File.Delete(local); } catch { } }
+            ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var tempDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Temp"); Directory.CreateDirectory(tempDirectory); var local = Path.Combine(tempDirectory, "adb-hosts-" + Guid.NewGuid().ToString("N")); try { File.WriteAllBytes(local, bytes); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", local, path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备文件失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod", "0775", path }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置 hosts 权限失败：" + chmod.StandardError); } finally { try { if (File.Exists(local)) File.Delete(local); } catch { } }
         }
 
         public async Task UploadNewFileAsync(string serial, string virtualDirectory, string localPath, CancellationToken token)
@@ -394,7 +394,7 @@ namespace WiFitool.Services
                     var chown = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chown " + attributes.Uid + ":" + attributes.Gid + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
                     if (chown.ExitCode != 0) throw new InvalidOperationException("设置文件属主失败：" + chown.StandardError);
                 }
-                var mode = attributes.Mode > 0 ? attributes.Mode : Convert.ToInt32("755", 8);
+                var mode = attributes.Mode > 0 ? attributes.Mode : Convert.ToInt32("775", 8);
                 var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod " + Convert.ToString(mode, 8) + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
                 if (chmod.ExitCode != 0) throw new InvalidOperationException("设置文件权限失败：" + chmod.StandardError);
             }

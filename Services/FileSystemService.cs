@@ -78,9 +78,22 @@ namespace WiFitool.Services
                     var metadata = metadataService.Load(source);
                     var staging = CreateStagingDirectory(source, Path.Combine(session.RootPath, "repacked"), null);
                     RemoveStagingSymlinks(staging, metadata);
-                    var args = new List<string> { staging, target, "-noappend", "-processors", "1" };
+                    var args = new List<string> { staging, target, "-noappend", "-no-xattrs", "-processors", "1" };
+                    WorkspaceMetadata rootMetadata;
+                    if (metadata.TryGetValue("/", out rootMetadata))
+                    {
+                        args.Add("-root-mode"); args.Add(Convert.ToString(GetMode(rootMetadata, Convert.ToInt32("755", 8)), 8));
+                        int rootUid, rootGid; GetOwner(rootMetadata, out rootUid, out rootGid);
+                        args.Add("-root-uid"); args.Add(rootUid.ToString(CultureInfo.InvariantCulture));
+                        args.Add("-root-gid"); args.Add(rootGid.ToString(CultureInfo.InvariantCulture));
+                    }
                     if (partition.BlockSize > 0) { args.Add("-b"); args.Add(partition.BlockSize.ToString()); }
                     if (!string.IsNullOrWhiteSpace(partition.Compression) && partition.Compression != "--" && !partition.Compression.StartsWith("未知")) { args.Add("-comp"); args.Add(partition.Compression); }
+                    if (partition.SquashFsUsesArmThumbFilter)
+                    {
+                        args.Add("-Xbcj"); args.Add("armthumb");
+                        if (partition.BlockSize > 0) { args.Add("-Xdict-size"); args.Add(partition.BlockSize.ToString(CultureInfo.InvariantCulture)); }
+                    }
                     string pseudo, repackPseudo = null;
                     try
                     {
@@ -175,6 +188,12 @@ namespace WiFitool.Services
                     if (TryGetStagingPath(staging, fields[0], out physical) && File.Exists(physical))
                         fields[2] = new DateTimeOffset(File.GetLastWriteTimeUtc(physical)).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
                 }
+                if (fields[1] == "R" || fields[1] == "D")
+                {
+                    // R and D records describe source data to unsquashfs. Existing staging entries must use M for mksquashfs to apply metadata.
+                    fields[1] = "M";
+                    Array.Resize(ref fields, 6);
+                }
                 existing.Add(path);
                 lines.Add(string.Join("\t", fields));
             }
@@ -185,11 +204,11 @@ namespace WiFitool.Services
                 if (!TryGetStagingPath(staging, item.Key, out path) || (!File.Exists(path) && !Directory.Exists(path))) continue;
                 var isDirectory = Directory.Exists(path);
                 int uid, gid; GetOwner(item.Value, out uid, out gid);
-                var mode = GetMode(item.Value, isDirectory ? Convert.ToInt32("755", 8) : Convert.ToInt32("644", 8));
+                var mode = GetMode(item.Value, isDirectory ? Convert.ToInt32("755", 8) : Convert.ToInt32("775", 8));
                 var time = new DateTimeOffset(File.GetLastWriteTimeUtc(path)).ToUnixTimeSeconds();
                 lines.Add(item.Key + "\t" + (isDirectory ? "D" : "M") + "\t" + time + "\t" + Convert.ToString(mode, 8) + "\t" + uid + "\t" + gid);
             }
-            return WriteRepackMetadata(lines, destinationFolder, ".pseudo-", dataOffset < 0 ? null : source.Skip(dataOffset).ToArray());
+            return WriteRepackMetadata(lines, destinationFolder, ".pseudo-");
         }
 
         private string CreateRepackJffs2DevTable(string sourcePath, string sourceRoot, string staging, string destinationFolder)
@@ -215,7 +234,7 @@ namespace WiFitool.Services
                 if (!TryGetStagingPath(staging, item.Key, out path) || (!File.Exists(path) && !Directory.Exists(path))) continue;
                 var isDirectory = Directory.Exists(path);
                 int uid, gid; GetOwner(item.Value, out uid, out gid);
-                lines.Add(item.Key + "\t" + (isDirectory ? "d" : "f") + "\t" + Convert.ToString(GetMode(item.Value, isDirectory ? Convert.ToInt32("755", 8) : Convert.ToInt32("644", 8)), 8) + "\t" + uid + "\t" + gid + "\t-\t-\t-\t-\t-");
+                lines.Add(item.Key + "\t" + (isDirectory ? "d" : "f") + "\t" + Convert.ToString(GetMode(item.Value, isDirectory ? Convert.ToInt32("755", 8) : Convert.ToInt32("775", 8)), 8) + "\t" + uid + "\t" + gid + "\t-\t-\t-\t-\t-");
             }
             return WriteRepackMetadata(lines, destinationFolder, ".devtable-");
         }
@@ -261,14 +280,14 @@ namespace WiFitool.Services
 
         private static void ApplySquashMetadata(string[] fields, WorkspaceMetadata entry)
         {
-            fields[3] = Convert.ToString(GetMode(entry, Convert.ToInt32("644", 8)), 8);
+            fields[3] = Convert.ToString(GetMode(entry, Convert.ToInt32("775", 8)), 8);
             int uid, gid;
             if (TryGetOwner(entry, out uid, out gid)) { fields[4] = uid.ToString(); fields[5] = gid.ToString(); }
         }
 
         private static void ApplyJffs2Metadata(string[] fields, WorkspaceMetadata entry)
         {
-            fields[2] = Convert.ToString(GetMode(entry, Convert.ToInt32("644", 8)), 8);
+            fields[2] = Convert.ToString(GetMode(entry, Convert.ToInt32("775", 8)), 8);
             int uid, gid;
             if (TryGetOwner(entry, out uid, out gid)) { fields[3] = uid.ToString(); fields[4] = gid.ToString(); }
         }
@@ -292,7 +311,8 @@ namespace WiFitool.Services
         {
             Directory.CreateDirectory(destinationFolder);
             var path = Path.Combine(destinationFolder, prefix + Guid.NewGuid().ToString("N"));
-            File.WriteAllLines(path, lines, new UTF8Encoding(false));
+            // mksquashfs treats CR in a pseudo-file symlink target as data, so metadata must use Unix LF line endings.
+            File.WriteAllText(path, string.Join("\n", lines) + "\n", new UTF8Encoding(false));
             if (trailingData != null && trailingData.Length > 0) using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.None)) stream.Write(trailingData, 0, trailingData.Length);
             return path;
         }

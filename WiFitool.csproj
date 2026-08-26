@@ -13,9 +13,9 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <StartupObject>WiFitool.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.31.2</Version>
-    <FileVersion>0.31.2.0</FileVersion>
-    <AssemblyVersion>0.31.2.0</AssemblyVersion>
+    <Version>0.31.8</Version>
+    <FileVersion>0.31.8.0</FileVersion>
+    <AssemblyVersion>0.31.8.0</AssemblyVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">

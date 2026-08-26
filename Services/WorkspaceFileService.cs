@@ -38,7 +38,7 @@ namespace WiFitool.Services
                 physicalEntries.Add(WorkspaceMetadataService.Normalize(virtualEntryPath));
                 WorkspaceMetadata saved;
                 metadata.TryGetValue(WorkspaceMetadataService.Normalize(virtualEntryPath), out saved);
-                var mode = saved != null ? saved.Mode : isDirectory ? Convert.ToInt32("755", 8) : cookie ? Convert.ToInt32("120777", 8) : Convert.ToInt32("644", 8);
+                var mode = saved != null ? saved.Mode : isDirectory ? Convert.ToInt32("755", 8) : cookie ? Convert.ToInt32("120777", 8) : Convert.ToInt32("775", 8);
                 var kind = isDirectory ? "目录" : cookie ? "符号链接" : "文件";
                 var size = isDirectory ? 0 : ((FileInfo)entry).Length;
                 list.Add(new WorkspaceEntry { Name = entry.Name, Path = virtualEntryPath, Kind = kind, Size = cookie ? 0 : size, UnixMode = mode, UnixModeText = ModeText(mode, isDirectory ? 'd' : cookie ? 'l' : '-'), Owner = saved == null ? "未知:未知" : saved.Owner, Modified = saved == null ? entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") : saved.Modified, Target = cookie ? target : saved == null ? null : saved.Target });
@@ -87,7 +87,7 @@ namespace WiFitool.Services
                 if (File.Exists(path)) File.Delete(path);
                 File.Move(temp, path);
                 WorkspaceMetadata entry;
-                if (!metadata.TryGetValue(WorkspaceMetadataService.Normalize(virtualPath), out entry)) entry = new WorkspaceMetadata { Mode = Convert.ToInt32("644", 8), Kind = "file", Owner = "未知:未知" };
+                if (!metadata.TryGetValue(WorkspaceMetadataService.Normalize(virtualPath), out entry)) entry = new WorkspaceMetadata { Mode = Convert.ToInt32("775", 8), Kind = "file", Owner = "0:0" };
                 entry.Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                 metadata[WorkspaceMetadataService.Normalize(virtualPath)] = entry;
                 metadataService.Save(rootPath, metadata);
@@ -111,9 +111,9 @@ namespace WiFitool.Services
                 File.Copy(sourcePath, target, overwrite);
                 metadata[WorkspaceMetadataService.Normalize(targetVirtual)] = new WorkspaceMetadata
                 {
-                    Mode = original == null ? Convert.ToInt32("755", 8) : original.Mode,
+                    Mode = original == null ? Convert.ToInt32("775", 8) : original.Mode,
                     Kind = "file",
-                    Owner = original == null ? "未知:未知" : original.Owner,
+                    Owner = original == null ? "0:0" : original.Owner,
                     Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
                 };
                 metadataService.Save(rootPath, metadata);
@@ -122,7 +122,7 @@ namespace WiFitool.Services
 
         public Task CreateDirectoryAsync(string rootPath, string virtualDirectory, string name)
         {
-            return Task.Run(delegate { var path = Combine(virtualDirectory, name); Directory.CreateDirectory(Resolve(rootPath, path, false)); metadataService.Update(rootPath, path, new WorkspaceMetadata { Mode = Convert.ToInt32("755", 8), Kind = "directory", Owner = "未知:未知", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); });
+            return Task.Run(delegate { var path = Combine(virtualDirectory, name); Directory.CreateDirectory(Resolve(rootPath, path, false)); metadataService.Update(rootPath, path, new WorkspaceMetadata { Mode = Convert.ToInt32("755", 8), Kind = "directory", Owner = "0:0", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); });
         }
 
         public Task DeleteAsync(string rootPath, string virtualPath)

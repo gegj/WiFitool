@@ -19,6 +19,7 @@ namespace WiFitool.Models
         public bool Modified { get; set; }
         public bool Repacked { get; set; }
         public uint SquashFsCreationTime { get; set; }
+        public bool SquashFsUsesArmThumbFilter { get; set; }
 
         public bool CanExtract { get { return FileSystem == "SquashFS" || FileSystem == "JFFS2"; } }
         public string Status

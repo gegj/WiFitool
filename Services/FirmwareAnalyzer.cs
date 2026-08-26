@@ -76,7 +76,9 @@ namespace WiFitool.Services
             var length = (int)Math.Min(part.Size, 512L * 1024); var data = new byte[length]; stream.Position = part.Offset; ReadExactly(stream, data, 0, data.Length);
             if (length >= 96 && data[0] == (byte)'h' && data[1] == (byte)'s' && data[2] == (byte)'q' && data[3] == (byte)'s')
             {
-                part.FileSystem = "SquashFS"; part.SquashFsCreationTime = ReadUInt32(data, 8); part.BlockSize = (int)ReadUInt32(data, 12); part.Compression = CompressionName(ReadUInt16(data, 20)); part.UsedBytes = (long)ReadUInt64(data, 40); return;
+                part.FileSystem = "SquashFS"; part.SquashFsCreationTime = ReadUInt32(data, 8); part.BlockSize = (int)ReadUInt32(data, 12); part.Compression = CompressionName(ReadUInt16(data, 20)); part.UsedBytes = (long)ReadUInt64(data, 40);
+                part.SquashFsUsesArmThumbFilter = part.Compression == "xz" && ContainsXzFilter(data, 0x08);
+                return;
             }
             for (var i = 0; i + 12 <= data.Length; i += 4)
             {
@@ -128,6 +130,52 @@ namespace WiFitool.Services
         private static string CompressionName(ushort value)
         {
             switch (value) { case 1: return "gzip"; case 2: return "lzma"; case 3: return "lzo"; case 4: return "xz"; case 5: return "lz4"; case 6: return "zstd"; default: return "未知(" + value + ")"; }
+        }
+
+        private static bool ContainsXzFilter(byte[] data, byte filterId)
+        {
+            for (var offset = 0; offset + 16 <= data.Length; offset++)
+            {
+                if (data[offset] != 0xFD || data[offset + 1] != 0x37 || data[offset + 2] != 0x7A || data[offset + 3] != 0x58 || data[offset + 4] != 0x5A) continue;
+                var header = offset + 12;
+                var headerLength = (data[header] + 1) * 4;
+                if (headerLength < 8 || header + headerLength > data.Length) continue;
+                var flags = data[header + 1];
+                var filterCount = (flags & 3) + 1;
+                var position = header + 2;
+                if ((flags & 0x40) != 0 && !SkipXzVli(data, ref position, header + headerLength - 4)) continue;
+                if ((flags & 0x80) != 0 && !SkipXzVli(data, ref position, header + headerLength - 4)) continue;
+                for (var filter = 0; filter < filterCount; filter++)
+                {
+                    ulong id;
+                    if (!ReadXzVli(data, ref position, header + headerLength - 4, out id)) break;
+                    ulong propertiesLength;
+                    if (!ReadXzVli(data, ref position, header + headerLength - 4, out propertiesLength) || propertiesLength > (ulong)(header + headerLength - 4 - position)) break;
+                    if (id == filterId) return true;
+                    position += (int)propertiesLength;
+                }
+            }
+            return false;
+        }
+
+        private static bool SkipXzVli(byte[] data, ref int position, int limit)
+        {
+            ulong ignored;
+            return ReadXzVli(data, ref position, limit, out ignored);
+        }
+
+        private static bool ReadXzVli(byte[] data, ref int position, int limit, out ulong value)
+        {
+            value = 0;
+            var shift = 0;
+            while (position < limit && shift < 64)
+            {
+                var current = data[position++];
+                value |= (ulong)(current & 0x7F) << shift;
+                if ((current & 0x80) == 0) return true;
+                shift += 7;
+            }
+            return false;
         }
 
         private static int InferEraseBlock(IEnumerable<PartitionInfo> parts)
