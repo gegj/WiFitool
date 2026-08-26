@@ -64,7 +64,8 @@ namespace WiFitool.Services
             var deviceType = await ReadDeviceTypeAsync(target, token);
             var version = await ReadSoftwareVersionAsync(target, token);
             var spaces = await ReadSpacesAsync(target, token);
-            return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = spaces.FirstOrDefault(x => x.Mount == "/mnt/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/data") };
+            var rootFsMode = await ReadRootFsModeAsync(target, token);
+            return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, RootFsMode = rootFsMode, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = spaces.FirstOrDefault(x => x.Mount == "/mnt/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/data") };
         }
 
         public async Task<List<ProcessInfo>> ListProcessesAsync(string serial, CancellationToken token)
@@ -468,6 +469,29 @@ namespace WiFitool.Services
         public async Task RemountRootAsync(string serial, CancellationToken token)
         {
             ValidateSerial(serial); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mount", "-o", "remount,rw", "/" }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("无法将系统根分区挂载为读写：" + result.StandardError);
+        }
+
+        // 读取根分区 / 当前的挂载模式，返回 "rw"、"ro" 或 ""（未知）。
+        public async Task<string> ReadRootFsModeAsync(string serial, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cat", "/proc/mounts" }, adbDirectory, token, null);
+            if (result.ExitCode != 0) return "";
+            var rootFsMode = "";
+            foreach (var raw in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = Regex.Split(raw.Trim(), @"\s+");
+                if (parts.Length < 4) continue;
+                if (!string.Equals(parts[1], "/", StringComparison.Ordinal)) continue;
+                var mode = "";
+                foreach (var option in parts[3].Split(','))
+                {
+                    if (string.Equals(option, "ro", StringComparison.OrdinalIgnoreCase)) mode = "ro";
+                    else if (string.Equals(option, "rw", StringComparison.OrdinalIgnoreCase)) mode = "rw";
+                }
+                if (mode.Length > 0) rootFsMode = mode;
+            }
+            return rootFsMode;
         }
 
         public async Task<string> ExportMtdImageAsync(string serial, string softwareVersion, string folder, CancellationToken token)

@@ -10,6 +10,7 @@ namespace WiFitool.Models
         public string TransportId { get; set; }
         public string DeviceType { get; set; }
         public string SoftwareVersion { get; set; }
+        public string RootFsMode { get; set; }
         public AdbPartitionSpace System { get; set; }
         public AdbPartitionSpace Userdata { get; set; }
 
@@ -20,6 +21,7 @@ namespace WiFitool.Models
             TransportId = "";
             DeviceType = "";
             SoftwareVersion = "";
+            RootFsMode = "";
         }
     }
 

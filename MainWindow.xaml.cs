@@ -844,6 +844,7 @@ namespace WiFitool
             edit.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && entry.Kind != "目录" && entry.Kind != "符号链接") { if (adbMode) await EditAdbFileAsync(entry); else FileGrid_MouseDoubleClick(null, null); } };
             permissions.Click += async delegate
             {
+                if (!EnsureAdbWritable("编辑权限")) return;
                 var entry = FileGrid.SelectedItem as WorkspaceEntry;
                 if (entry == null || entry.Kind == "符号链接") return;
                 var dialog = new PermissionWindow(entry); dialog.Owner = this;
@@ -871,6 +872,7 @@ namespace WiFitool
             };
             rename.Click += async delegate
             {
+                if (!EnsureAdbWritable("重命名")) return;
                 var entry = FileGrid.SelectedItem as WorkspaceEntry;
                 if (entry == null || entry.Path == "/") return;
                 var name = Prompt("重命名", "新名称：");
@@ -892,13 +894,33 @@ namespace WiFitool
                 }
                 catch (Exception ex) { MessageBox.Show(this, ex.Message, "重命名失败", MessageBoxButton.OK, MessageBoxImage.Error); }
             };
-            uploadNew.Click += async delegate { var directory = GetUploadDirectory(); var dialog = new OpenFileDialog { Title = "选择要上传的文件" }; if (dialog.ShowDialog() == true) await UploadSourcesAsync(new[] { dialog.FileName }, directory); };
-            uploadFolder.Click += async delegate { var directory = GetUploadDirectory(); string folder; if (FolderDialog.TrySelect(this, "选择要上传的文件夹", out folder)) await UploadSourcesAsync(new[] { folder }, directory); };
-            newDirectory.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; var directory = entry == null ? currentDirectory : entry.Kind == "目录" ? entry.Path : currentDirectory; var name = Prompt("新建目录", "目录名称："); if (string.IsNullOrWhiteSpace(name)) return; try { if (adbMode) { if (MessageBox.Show(this, "确认在设备目录创建：" + directory + "/" + name + "？", "确认创建", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; await RunTaskProgressAsync(async () => { await adbService.CreateDirectoryAsync(adbSerial, directory, name, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.CreateDirectoryAsync(currentRoot, directory, name)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "创建目录失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
+            uploadNew.Click += async delegate { if (!EnsureAdbWritable("上传文件")) return; var directory = GetUploadDirectory(); var dialog = new OpenFileDialog { Title = "选择要上传的文件" }; if (dialog.ShowDialog() == true) await UploadSourcesAsync(new[] { dialog.FileName }, directory); };
+            uploadFolder.Click += async delegate { if (!EnsureAdbWritable("上传文件夹")) return; var directory = GetUploadDirectory(); string folder; if (FolderDialog.TrySelect(this, "选择要上传的文件夹", out folder)) await UploadSourcesAsync(new[] { folder }, directory); };
+            newDirectory.Click += async delegate { if (!EnsureAdbWritable("新建目录")) return; var entry = FileGrid.SelectedItem as WorkspaceEntry; var directory = entry == null ? currentDirectory : entry.Kind == "目录" ? entry.Path : currentDirectory; var name = Prompt("新建目录", "目录名称："); if (string.IsNullOrWhiteSpace(name)) return; try { if (adbMode) { if (MessageBox.Show(this, "确认在设备目录创建：" + directory + "/" + name + "？", "确认创建", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; await RunTaskProgressAsync(async () => { await adbService.CreateDirectoryAsync(adbSerial, directory, name, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.CreateDirectoryAsync(currentRoot, directory, name)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "创建目录失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
             download.Click += async delegate { await DownloadEntryAsync(FileGrid.SelectedItem as WorkspaceEntry); };
-            delete.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null) return; if (MessageBox.Show(this, "确认删除：" + entry.Path + "？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; try { if (adbMode) { await RunTaskProgressAsync(async () => { await adbService.DeleteRemoteAsync(adbSerial, entry.Path, entry.Kind == "目录", CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.DeleteAsync(currentRoot, entry.Path)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "删除失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
+            delete.Click += async delegate { if (!EnsureAdbWritable("删除")) return; var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry == null) return; if (MessageBox.Show(this, "确认删除：" + entry.Path + "？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; try { if (adbMode) { await RunTaskProgressAsync(async () => { await adbService.DeleteRemoteAsync(adbSerial, entry.Path, entry.Kind == "目录", CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.DeleteAsync(currentRoot, entry.Path)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "删除失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
             refresh.Click += async delegate { if (adbMode) await LoadAdbFilesAsyncTask(); else LoadFiles(); };
-            menu.Opened += delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; edit.Visibility = entry != null && entry.Kind != "目录" && entry.Kind != "符号链接" ? Visibility.Visible : Visibility.Collapsed; };
+            menu.Opened += delegate
+            {
+                var entry = FileGrid.SelectedItem as WorkspaceEntry;
+                edit.Visibility = entry != null && entry.Kind != "目录" && entry.Kind != "符号链接" ? Visibility.Visible : Visibility.Collapsed;
+                var readOnly = IsAdbReadOnly();
+                permissions.IsEnabled = !readOnly;
+                rename.IsEnabled = !readOnly;
+                uploadNew.IsEnabled = !readOnly;
+                uploadFolder.IsEnabled = !readOnly;
+                newDirectory.IsEnabled = !readOnly;
+                delete.IsEnabled = !readOnly;
+                if (readOnly)
+                {
+                    permissions.ToolTip = "设备根分区为只读";
+                    rename.ToolTip = "设备根分区为只读";
+                    uploadNew.ToolTip = "设备根分区为只读";
+                    uploadFolder.ToolTip = "设备根分区为只读";
+                    newDirectory.ToolTip = "设备根分区为只读";
+                    delete.ToolTip = "设备根分区为只读";
+                }
+            };
             menu.Items.Add(refresh); menu.Items.Add(edit); menu.Items.Add(permissions); menu.Items.Add(rename); menu.Items.Add(uploadNew); menu.Items.Add(uploadFolder); menu.Items.Add(newDirectory); menu.Items.Add(download); menu.Items.Add(delete); return menu;
         }
 
@@ -911,6 +933,7 @@ namespace WiFitool
         private async void FileGrid_Drop(object sender, DragEventArgs e)
         {
             e.Handled = true;
+            if (adbMode && IsAdbReadOnly()) { MessageBox.Show(this, "设备根分区为只读，无法上传文件。", "只读提示", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             if (!CanUploadToCurrentSource()) return;
             var paths = e.Data.GetData(DataFormats.FileDrop) as string[];
             if (paths == null || paths.Length == 0) return;
@@ -925,11 +948,12 @@ namespace WiFitool
 
         private bool CanUploadToCurrentSource()
         {
-            return adbMode ? adbStatus.DeviceState == "online" && !string.IsNullOrWhiteSpace(adbSerial) : !string.IsNullOrWhiteSpace(currentRoot);
+            return adbMode ? adbStatus.DeviceState == "online" && !string.IsNullOrWhiteSpace(adbSerial) && !IsAdbReadOnly() : !string.IsNullOrWhiteSpace(currentRoot);
         }
 
         private async Task UploadSourcesAsync(IEnumerable<string> sourcePaths, string targetDirectory)
         {
+            if (adbMode && !EnsureAdbWritable("上传文件")) return;
             if (!CanUploadToCurrentSource()) { MessageBox.Show(this, "请先选择本地固件分区或连接在线 ADB 设备。", "上传", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             var sources = sourcePaths.Where(x => File.Exists(x) || Directory.Exists(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (sources.Count == 0) return;
@@ -1161,7 +1185,7 @@ namespace WiFitool
             {
                 var list = await adbService.ListDirectoryAsync(adbSerial, path, CancellationToken.None);
                 if (!adbMode || path != currentDirectory) return;
-                files.Clear(); foreach (var entry in list) files.Add(entry); UpdateBreadcrumb(); StatusText.Text = "ADB 设备目录  " + path; UpdateFileSourceButtons();
+                files.Clear(); foreach (var entry in list) files.Add(entry); UpdateBreadcrumb(); StatusText.Text = "ADB 设备目录  " + path + "  " + GetRootFsText(adbStatus.RootFsMode); UpdateFileSourceButtons();
             }
             catch (Exception ex) { StatusText.Text = "读取设备目录失败：" + ex.Message; }
             finally { if (showProgress) EndTaskProgress(); }
@@ -1176,6 +1200,7 @@ namespace WiFitool
         {
             try
             {
+                var readOnly = IsAdbReadOnly();
                 byte[] bytes = null;
                 await RunTaskProgressAsync(async () => { bytes = await adbService.ReadFileAsync(adbSerial, path, CancellationToken.None); });
                 var temp = Path.Combine(Path.GetTempPath(), "wifitool-edit-" + Guid.NewGuid().ToString("N"));
@@ -1184,8 +1209,9 @@ namespace WiFitool
                 try { data = fileService.ReadText(Path.GetDirectoryName(temp), "/" + Path.GetFileName(temp)); }
                 finally { try { File.Delete(temp); } catch { } }
                 data.RawBytes = bytes;
-                var editor = new TextEditorWindow(path, data, lineNumber);
+                var editor = new TextEditorWindow(path, data, lineNumber, readOnly);
                 if (editor.ShowDialog() != true) return;
+                if (readOnly) { StatusText.Text = "只读模式，未保存更改"; return; }
                 var encoding = EncodingForName(editor.SelectedEncodingName);
                 var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding);
                 var updated = encoding.GetBytes(normalized);
@@ -1213,6 +1239,7 @@ namespace WiFitool
             {
                 if (adbMode)
                 {
+                    var readOnly = IsAdbReadOnly();
                     TextFileData data = null;
                     await RunTaskProgressAsync(async () =>
                     {
@@ -1230,15 +1257,15 @@ namespace WiFitool
                                 createMissingFile = true;
                                 data = new TextFileData { Text = "", EncodingName = "UTF-8", LineEnding = "LF" };
                             }
-                            if (createMissingFile) await adbService.CreateFileAsync(adbSerial, hostsPath, new byte[0], CancellationToken.None);
+                            if (createMissingFile && !readOnly) await adbService.CreateFileAsync(adbSerial, hostsPath, new byte[0], CancellationToken.None);
                         }
                         else
                         {
-                            await adbService.CreateFileAsync(adbSerial, hostsPath, new byte[0], CancellationToken.None);
+                            if (!readOnly) await adbService.CreateFileAsync(adbSerial, hostsPath, new byte[0], CancellationToken.None);
                             data = new TextFileData { Text = "", EncodingName = "UTF-8", LineEnding = "LF" };
                         }
                     });
-                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true && MessageBox.Show(this, "确认应用 /etc/hosts 到设备？", "Hosts", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { await RunTaskProgressAsync(async () => { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var updated = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated); if (editor.SelectedEncodingName == "UTF-16 LE") updated = Prepend(new byte[] { 0xFF, 0xFE }, updated); if (editor.SelectedEncodingName == "UTF-16 BE") updated = Prepend(new byte[] { 0xFE, 0xFF }, updated); await adbService.CreateFileAsync(adbSerial, hostsPath, updated, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); }
+                    var editor = new TextEditorWindow("/etc/hosts", data, 0, readOnly); if (editor.ShowDialog() != true) return; if (readOnly) { StatusText.Text = "只读模式，未保存更改"; return; } if (MessageBox.Show(this, "确认应用 /etc/hosts 到设备？", "Hosts", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { await RunTaskProgressAsync(async () => { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var updated = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") updated = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, updated); if (editor.SelectedEncodingName == "UTF-16 LE") updated = Prepend(new byte[] { 0xFF, 0xFE }, updated); if (editor.SelectedEncodingName == "UTF-16 BE") updated = Prepend(new byte[] { 0xFE, 0xFF }, updated); await adbService.CreateFileAsync(adbSerial, hostsPath, updated, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); }
                 }
                 else
                 {
@@ -1277,6 +1304,15 @@ namespace WiFitool
                 {
                     try { await adbService.RemountRootAsync(adbSerial, CancellationToken.None); }
                     catch (Exception ex) { remountError = ex.Message; }
+                    try
+                    {
+                        state.RootFsMode = await adbService.ReadRootFsModeAsync(adbSerial, CancellationToken.None);
+                        if (!string.Equals(state.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(remountError)) remountError = "检测到系统根分区仍为只读。";
+                    }
+                    catch (Exception ex)
+                    {
+                        if (string.IsNullOrWhiteSpace(remountError)) remountError = "无法确认系统根分区状态：" + ex.Message;
+                    }
                 }
                 if (deviceChanged || state.DeviceState != "online")
                 {
@@ -1287,7 +1323,7 @@ namespace WiFitool
                 AdbExportButton.IsEnabled = state.DeviceState == "online";
                 if (state.DeviceState == "online") { AdbDot.Fill = (Brush)FindResource("SuccessBrush"); AdbStatusText.Text = "ADB 设备在线"; AdbStatusSummaryText.Text = "系统 " + FormatAdbSpace(state.System == null ? 0 : state.System.FreeBytes) + " · 用户 " + FormatAdbSpace(state.Userdata == null ? 0 : state.Userdata.FreeBytes); ProcessDeviceText.Text = "设备在线"; RefreshProcessButton.IsEnabled = true; }
                 else { AdbDot.Fill = (Brush)FindResource("DisabledBrush"); AdbStatusText.Text = state.DeviceState == "no-device" ? "ADB 等待设备" : state.DeviceState == "offline" ? "ADB 设备离线" : "ADB 服务未启动"; AdbStatusSummaryText.Text = "等待设备连接"; ProcessDeviceText.Text = "未连接设备"; RefreshProcessButton.IsEnabled = false; }
-                if (deviceChanged && state.DeviceState == "online") StatusText.Text = string.IsNullOrWhiteSpace(remountError) ? "已将系统根分区挂载为读写" : "系统根分区挂载读写失败：" + remountError;
+                if (deviceChanged && state.DeviceState == "online") StatusText.Text = string.Equals(state.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(remountError) ? "已将系统根分区挂载为读写" : "系统根分区挂载读写失败：" + remountError;
                 UpdateFileSourceButtons();
                 if (state.DeviceState == "online" && FilesView.Visibility == Visibility.Visible && !adbMode && string.IsNullOrEmpty(currentRoot)) await ActivateAdbSourceAsync(false);
             }
@@ -1303,7 +1339,7 @@ namespace WiFitool
             AdbPortText.Text = state != null && state.PortConnected ? "127.0.0.1:5037" : "--";
             AdbPortStateText.Text = state != null && state.PortConnected ? "已连接" : "未连接";
             AdbDeviceStateText.Text = online ? "在线" : GetAdbStateText(state == null ? "no-port" : state.DeviceState);
-            UpdatePartitionDetails(state == null ? null : state.System, AdbSystemTitleText, AdbSystemFreeText, AdbSystemUsageText, AdbSystemProgress, "系统分区");
+            UpdatePartitionDetails(state == null ? null : state.System, AdbSystemTitleText, AdbSystemFreeText, AdbSystemUsageText, AdbSystemProgress, "系统分区", state == null ? "" : GetRootFsText(state.RootFsMode));
             UpdatePartitionDetails(state == null ? null : state.Userdata, AdbUserdataTitleText, AdbUserdataFreeText, AdbUserdataUsageText, AdbUserdataProgress, "用户分区");
         }
 
@@ -1315,18 +1351,26 @@ namespace WiFitool
             return "未知";
         }
 
-        private static void UpdatePartitionDetails(AdbPartitionSpace space, TextBlock title, TextBlock free, TextBlock usage, ProgressBar progress, string label)
+        private static string GetRootFsText(string mode)
         {
+            if (string.Equals(mode, "rw", StringComparison.OrdinalIgnoreCase)) return "读写";
+            if (string.Equals(mode, "ro", StringComparison.OrdinalIgnoreCase)) return "只读";
+            return "未知";
+        }
+
+        private static void UpdatePartitionDetails(AdbPartitionSpace space, TextBlock title, TextBlock free, TextBlock usage, ProgressBar progress, string label, string modeText = "")
+        {
+            var suffix = string.IsNullOrWhiteSpace(modeText) ? "" : "  " + modeText;
             if (space == null || space.TotalBytes <= 0)
             {
-                title.Text = label + " --";
+                title.Text = label + " --" + suffix;
                 free.Text = "-- 剩余";
                 usage.Text = "未获取分区信息";
                 progress.Value = 0;
                 return;
             }
             var mount = string.IsNullOrWhiteSpace(space.Mount) ? "/" : space.Mount;
-            title.Text = label + " " + mount;
+            title.Text = label + " " + mount + suffix;
             free.Text = FormatAdbSpace(space.FreeBytes) + " 剩余";
             usage.Text = "已用 " + FormatAdbSpace(space.UsedBytes) + " / 共 " + FormatAdbSpace(space.TotalBytes) + " · " + mount;
             progress.Value = Math.Max(0, Math.Min(100, space.UsedBytes * 100d / space.TotalBytes));
@@ -1338,6 +1382,18 @@ namespace WiFitool
             if (value >= 1024 * 1024) return (value / 1024d / 1024d).ToString("0.##") + " MiB";
             if (value >= 1024) return (value / 1024d).ToString("0.##") + " KiB";
             return value + " B";
+        }
+
+        private bool IsAdbReadOnly()
+        {
+            return adbMode && adbStatus != null && string.Equals(adbStatus.RootFsMode, "ro", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool EnsureAdbWritable(string actionText)
+        {
+            if (!IsAdbReadOnly()) return true;
+            MessageBox.Show(this, "设备根分区为只读，无法" + actionText + "。", "只读提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
         }
 
         private string CreateExportFolder(string parentFolder, string imageFallback)

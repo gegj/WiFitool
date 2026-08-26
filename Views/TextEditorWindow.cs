@@ -15,20 +15,27 @@ namespace WiFitool
         private readonly ComboBox encodingCombo;
         private readonly ComboBox lineEndingCombo;
         private readonly TextBlock positionText;
+        private readonly bool readOnly;
         private string findKeyword;
         private bool findCaseSensitive;
         public string EditorText { get { return textBox.Text; } }
         public string SelectedEncodingName { get { return encodingCombo.SelectedItem as string; } }
         public string SelectedLineEnding { get { return lineEndingCombo.SelectedItem as string; } }
         public TextEditorWindow(string name, TextFileData data)
-            : this(name, data, 0)
+            : this(name, data, 0, false)
         {
         }
 
         public TextEditorWindow(string name, TextFileData data, int lineNumber)
+            : this(name, data, lineNumber, false)
+        {
+        }
+
+        public TextEditorWindow(string name, TextFileData data, int lineNumber, bool readOnly)
         {
             this.data = data;
-            Title = "编辑：" + name;
+            this.readOnly = readOnly;
+            Title = (readOnly ? "只读：" : "编辑：") + name;
             Width = 900;
             Height = 700;
             MinWidth = 560;
@@ -107,7 +114,8 @@ namespace WiFitool
                 Foreground = GetBrush("TextBrush", Color.FromRgb(240, 245, 252)),
                 BorderBrush = GetBrush("BorderBrush", Color.FromRgb(43, 58, 80)),
                 BorderThickness = new Thickness(1),
-                Padding = new Thickness(10, 8, 10, 8)
+                Padding = new Thickness(10, 8, 10, 8),
+                IsReadOnly = readOnly
             };
             Grid.SetRow(textBox, 0);
             panel.Children.Add(textBox);
@@ -121,6 +129,7 @@ namespace WiFitool
             encodingCombo = new ComboBox { Width = 118, Margin = new Thickness(6, 0, 16, 0), FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
             foreach (var item in new[] { "UTF-8", "UTF-8 BOM", "UTF-16 LE", "UTF-16 BE", "GB18030" }) encodingCombo.Items.Add(item);
             encodingCombo.SelectedItem = data.EncodingName;
+            encodingCombo.IsEnabled = !readOnly;
             encodingPanel.Children.Add(encodingCombo);
             Grid.SetColumn(encodingPanel, 0);
             statusBar.Children.Add(encodingPanel);
@@ -130,6 +139,7 @@ namespace WiFitool
             lineEndingCombo = new ComboBox { Width = 96, Margin = new Thickness(6, 0, 0, 0), FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
             foreach (var item in new[] { "LF", "CRLF", "CR", "无换行" }) lineEndingCombo.Items.Add(item);
             lineEndingCombo.SelectedItem = data.LineEnding;
+            lineEndingCombo.IsEnabled = !readOnly;
             lineEndingPanel.Children.Add(lineEndingCombo);
             Grid.SetColumn(lineEndingPanel, 1);
             statusBar.Children.Add(lineEndingPanel);
@@ -142,13 +152,14 @@ namespace WiFitool
             textBox.SelectionChanged += delegate { UpdatePosition(); };
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
-            var repair = new Button { Content = "修复为 UTF-8", MinWidth = 100, Margin = new Thickness(0, 0, 8, 0) };
+            var repair = new Button { Content = "修复为 UTF-8", MinWidth = 100, Margin = new Thickness(0, 0, 8, 0), IsEnabled = !readOnly };
             var find = new Button { Content = "查找", MinWidth = 74, Margin = new Thickness(0, 0, 8, 0) };
-            var save = new Button { Content = "保存", MinWidth = 74, IsDefault = true, Margin = new Thickness(0, 0, 8, 0), Background = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)), Foreground = Brushes.White, BorderBrush = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)) };
+            var save = new Button { Content = readOnly ? "关闭" : "保存", MinWidth = 74, IsDefault = !readOnly, Margin = new Thickness(0, 0, 8, 0), Background = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)), Foreground = Brushes.White, BorderBrush = GetBrush("AccentBrush", Color.FromRgb(91, 131, 255)) };
             var cancel = new Button { Content = "取消", MinWidth = 74, IsCancel = true, Background = GetBrush("PanelAltBrush", Color.FromRgb(27, 42, 64)), Foreground = GetBrush("TextBrush", Color.FromRgb(240, 245, 252)), BorderBrush = GetBrush("BorderBrush", Color.FromRgb(43, 58, 80)) };
             repair.Click += delegate { RepairToUtf8(); };
             find.Click += delegate { BeginFind(); };
-            save.Click += delegate { DialogResult = true; Close(); };
+            if (readOnly) save.Click += delegate { Close(); };
+            else save.Click += delegate { DialogResult = true; Close(); };
             buttons.Children.Add(repair); buttons.Children.Add(find); buttons.Children.Add(save); buttons.Children.Add(cancel);
             Grid.SetRow(buttons, 2);
             panel.Children.Add(buttons);
@@ -182,6 +193,7 @@ namespace WiFitool
 
         private void RepairToUtf8()
         {
+            if (readOnly) return;
             if (data == null || data.RawBytes == null) return;
             try
             {
