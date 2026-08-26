@@ -43,6 +43,12 @@ namespace WiFitool
         private AdbStatusInfo adbStatus = new AdbStatusInfo();
         private CancellationTokenSource activeCancellation;
         private bool adbChecking;
+        private CancellationTokenSource terminalCancellation;
+        private bool terminalExecuting;
+        private readonly List<string> terminalHistory = new List<string>();
+        private int terminalHistoryIndex;
+        private string terminalWorkingDirectory = "/";
+        private int terminalPromptStart = 4;
         private bool processRefreshing;
         private string processCacheSerial;
         private bool processCacheReady;
@@ -73,7 +79,7 @@ namespace WiFitool
             FileGrid.ItemsSource = files;
             SizeChanged += MainWindow_SizeChanged;
             Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
-            Closing += delegate { adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); };
+            Closing += delegate { adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); if (terminalCancellation != null) terminalCancellation.Cancel(); };
             ProcessGrid.ContextMenu = CreateProcessMenu(false);
             CoreProcessGrid.ContextMenu = CreateProcessMenu(true);
             FileGrid.ContextMenu = CreateFileMenu();
@@ -594,14 +600,122 @@ namespace WiFitool
             try { await RefreshProcessesAsync(); StatusText.Text = "已读取进程和启动来源"; }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "读取进程失败", MessageBoxButton.OK, MessageBoxImage.Error); }
         }
+        private void AdbTerminalNav_Click(object sender, RoutedEventArgs e)
+        {
+            SetView(AdbTerminalView);
+            UpdateTerminalState();
+            if (AdbTerminalBox.IsEnabled) { AdbTerminalBox.Focus(); AdbTerminalBox.CaretIndex = AdbTerminalBox.Text.Length; }
+        }
         private void SetView(UIElement visible)
         {
             OverviewView.Visibility = visible == OverviewView ? Visibility.Visible : Visibility.Collapsed;
             FilesView.Visibility = visible == FilesView ? Visibility.Visible : Visibility.Collapsed;
             ProcessView.Visibility = visible == ProcessView ? Visibility.Visible : Visibility.Collapsed;
+            AdbTerminalView.Visibility = visible == AdbTerminalView ? Visibility.Visible : Visibility.Collapsed;
             OverviewNav.Background = visible == OverviewView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             FilesNav.Background = visible == FilesView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             ProcessNav.Background = visible == ProcessView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
+            AdbTerminalNav.Background = visible == AdbTerminalView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
+        }
+
+        private async void AdbTerminalBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (terminalExecuting) { e.Handled = true; return; }
+            if (e.Key == Key.Up)
+            {
+                if (terminalHistory.Count > 0 && terminalHistoryIndex > 0) terminalHistoryIndex--;
+                if (terminalHistory.Count > 0) ReplaceTerminalCommand(terminalHistory[terminalHistoryIndex]);
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Down)
+            {
+                if (terminalHistoryIndex < terminalHistory.Count - 1) { terminalHistoryIndex++; ReplaceTerminalCommand(terminalHistory[terminalHistoryIndex]); }
+                else { terminalHistoryIndex = terminalHistory.Count; ReplaceTerminalCommand(""); }
+                e.Handled = true;
+                return;
+            }
+            if (e.Key != Key.Enter) return;
+            e.Handled = true;
+            var command = GetTerminalCommand().Trim();
+            if (string.IsNullOrWhiteSpace(command)) return;
+            terminalHistory.Add(command);
+            terminalHistoryIndex = terminalHistory.Count;
+            AdbTerminalBox.AppendText("\r\n");
+            terminalExecuting = true;
+            UpdateTerminalState();
+            terminalCancellation = new CancellationTokenSource();
+            var commandSerial = adbSerial;
+            try
+            {
+                if (adbStatus == null || adbStatus.DeviceState != "online" || string.IsNullOrWhiteSpace(commandSerial))
+                {
+                    AppendTerminalOutput("设备未连接，无法执行命令。\r\n");
+                    return;
+                }
+                var isChangeDirectory = command == "cd" || command.StartsWith("cd ", StringComparison.Ordinal);
+                if (isChangeDirectory)
+                {
+                    var target = command.Length == 2 ? "" : command.Substring(3);
+                    var result = await adbService.ChangeDirectoryAsync(commandSerial, terminalWorkingDirectory, target, terminalCancellation.Token);
+                    if (result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StandardOutput)) terminalWorkingDirectory = result.StandardOutput.Trim();
+                    else
+                    {
+                        if (!string.IsNullOrEmpty(result.StandardOutput)) AppendTerminalOutput(result.StandardOutput);
+                        if (!string.IsNullOrEmpty(result.StandardError)) AppendTerminalOutput(result.StandardError);
+                        AppendTerminalOutput("[退出码: " + result.ExitCode + "]\r\n");
+                    }
+                }
+                else
+                {
+                    var result = await adbService.ExecuteShellCommandAsync(commandSerial, terminalWorkingDirectory, command, terminalCancellation.Token);
+                    if (!string.IsNullOrEmpty(result.StandardOutput)) AppendTerminalOutput(result.StandardOutput);
+                    if (!string.IsNullOrEmpty(result.StandardError)) AppendTerminalOutput(result.StandardError);
+                    if (result.ExitCode != 0) AppendTerminalOutput("[退出码: " + result.ExitCode + "]\r\n");
+                }
+            }
+            catch (OperationCanceledException) { AppendTerminalOutput("[命令已取消]\r\n"); }
+            catch (Exception ex) { AppendTerminalOutput("[执行失败] " + ex.Message + "\r\n"); }
+            finally
+            {
+                terminalCancellation.Dispose();
+                terminalCancellation = null;
+                terminalExecuting = false;
+                AppendTerminalOutput("\r\n" + GetTerminalPrompt());
+                terminalPromptStart = AdbTerminalBox.Text.Length;
+                UpdateTerminalState();
+                if (AdbTerminalView.Visibility == Visibility.Visible && AdbTerminalBox.IsEnabled) { AdbTerminalBox.Focus(); AdbTerminalBox.CaretIndex = AdbTerminalBox.Text.Length; }
+            }
+        }
+
+        private void AppendTerminalOutput(string text)
+        {
+            AdbTerminalBox.AppendText(text ?? "");
+            AdbTerminalBox.ScrollToEnd();
+        }
+
+        private string GetTerminalCommand()
+        {
+            return AdbTerminalBox.Text.Length < terminalPromptStart ? "" : AdbTerminalBox.Text.Substring(terminalPromptStart);
+        }
+
+        private string GetTerminalPrompt()
+        {
+            return terminalWorkingDirectory + " > ";
+        }
+
+        private void ReplaceTerminalCommand(string command)
+        {
+            var prefix = AdbTerminalBox.Text.Length < terminalPromptStart ? AdbTerminalBox.Text : AdbTerminalBox.Text.Substring(0, terminalPromptStart);
+            AdbTerminalBox.Text = prefix + (command ?? "");
+            AdbTerminalBox.CaretIndex = AdbTerminalBox.Text.Length;
+        }
+
+        private void UpdateTerminalState()
+        {
+            var online = adbStatus != null && adbStatus.DeviceState == "online" && !string.IsNullOrWhiteSpace(adbSerial);
+            AdbTerminalDeviceText.Text = online ? "设备：" + adbSerial : "未连接设备";
+            AdbTerminalBox.IsEnabled = online && !terminalExecuting;
         }
         private void AdbStatusButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1317,7 +1431,9 @@ namespace WiFitool
                 if (deviceChanged || state.DeviceState != "online")
                 {
                     ClearProcessCache();
+                    if (deviceChanged) terminalWorkingDirectory = "/";
                     if (state.DeviceState != "online") { ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; }
+                    if (terminalCancellation != null) terminalCancellation.Cancel();
                 }
                 UpdateAdbDetails(state);
                 AdbExportButton.IsEnabled = state.DeviceState == "online";
@@ -1325,9 +1441,10 @@ namespace WiFitool
                 else { AdbDot.Fill = (Brush)FindResource("DisabledBrush"); AdbStatusText.Text = state.DeviceState == "no-device" ? "ADB 等待设备" : state.DeviceState == "offline" ? "ADB 设备离线" : "ADB 服务未启动"; AdbStatusSummaryText.Text = "等待设备连接"; ProcessDeviceText.Text = "未连接设备"; RefreshProcessButton.IsEnabled = false; }
                 if (deviceChanged && state.DeviceState == "online") StatusText.Text = string.Equals(state.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(remountError) ? "已将系统根分区挂载为读写" : "系统根分区挂载读写失败：" + remountError;
                 UpdateFileSourceButtons();
+                UpdateTerminalState();
                 if (state.DeviceState == "online" && FilesView.Visibility == Visibility.Visible && !adbMode && string.IsNullOrEmpty(currentRoot)) await ActivateAdbSourceAsync(false);
             }
-            catch (Exception ex) { ClearProcessCache(); ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; AdbStatusText.Text = "ADB 检测失败：" + ex.Message; AdbExportButton.IsEnabled = false; RefreshProcessButton.IsEnabled = false; }
+            catch (Exception ex) { ClearProcessCache(); ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; AdbStatusText.Text = "ADB 检测失败：" + ex.Message; AdbExportButton.IsEnabled = false; RefreshProcessButton.IsEnabled = false; UpdateTerminalState(); }
             finally { if (showProgress) EndTaskProgress(); adbChecking = false; }
         }
 

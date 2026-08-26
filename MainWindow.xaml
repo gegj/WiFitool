@@ -128,6 +128,9 @@
             <Button x:Name="ProcessNav" Click="ProcessNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
               <StackPanel Orientation="Horizontal"><TextBlock Text="⌁" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="18" /><TextBlock Text="进程和启动" /></StackPanel>
             </Button>
+            <Button x:Name="AdbTerminalNav" Click="AdbTerminalNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="›_" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="15" FontFamily="Consolas" /><TextBlock Text="ADB 终端" /></StackPanel>
+            </Button>
           </StackPanel>
         </Grid>
       </Border>
@@ -342,6 +345,22 @@
                   </DataGrid.Columns>
                 </DataGrid>
               </Expander>
+            </views:RoundedClipBorder>
+          </Grid>
+
+          <!-- ADB 终端 -->
+          <Grid x:Name="AdbTerminalView" Visibility="Collapsed">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <Grid x:Name="AdbTerminalHeaderGrid" Grid.Row="0" Margin="0,0,0,17">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="ADB 终端" FontSize="23" FontWeight="SemiBold" />
+                <TextBlock Text="在当前在线设备上执行 Shell 命令，按 Enter 发送" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+              </StackPanel>
+              <TextBlock x:Name="AdbTerminalDeviceText" Grid.Column="1" Text="未连接设备" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0" TextTrimming="CharacterEllipsis" />
+            </Grid>
+            <views:RoundedClipBorder Grid.Row="1" Style="{StaticResource CardStyle}" Padding="14">
+              <TextBox x:Name="AdbTerminalBox" Text="/ &gt; " IsEnabled="False" AcceptsReturn="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="12" FontFamily="Consolas" FontSize="12" ToolTip="输入设备端命令后按 Enter 发送" PreviewKeyDown="AdbTerminalBox_KeyDown" />
             </views:RoundedClipBorder>
           </Grid>
         </Grid>

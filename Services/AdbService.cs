@@ -68,6 +68,22 @@ namespace WiFitool.Services
             return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, RootFsMode = rootFsMode, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = spaces.FirstOrDefault(x => x.Mount == "/mnt/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/data") };
         }
 
+        public async Task<ToolResult> ExecuteShellCommandAsync(string serial, string workingDirectory, string command, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            if (string.IsNullOrWhiteSpace(command)) throw new InvalidOperationException("命令不能为空。");
+            var directory = NormalizeRemotePath(workingDirectory);
+            return await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cd " + QuoteShellArgument(directory) + " && " + command }, adbDirectory, token, null);
+        }
+
+        public async Task<ToolResult> ChangeDirectoryAsync(string serial, string workingDirectory, string target, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var directory = NormalizeRemotePath(workingDirectory);
+            var targetDirectory = string.IsNullOrWhiteSpace(target) ? "/" : target.Trim();
+            return await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cd " + QuoteShellArgument(directory) + " && cd " + targetDirectory + " && pwd" }, adbDirectory, token, null);
+        }
+
         public async Task<List<ProcessInfo>> ListProcessesAsync(string serial, CancellationToken token)
         {
             ValidateSerial(serial);
