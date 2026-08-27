@@ -125,6 +125,9 @@
             <Button x:Name="FilesNav" Click="FilesNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
               <StackPanel Orientation="Horizontal"><TextBlock Text="▤" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="16" /><TextBlock Text="文件管理" /></StackPanel>
             </Button>
+            <Button x:Name="DomainScanNav" Click="DomainScanNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="⌕" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="18" /><TextBlock Text="域名扫描" /></StackPanel>
+            </Button>
             <Button x:Name="ProcessNav" Click="ProcessNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
               <StackPanel Orientation="Horizontal"><TextBlock Text="⌁" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="18" /><TextBlock Text="进程和启动" /></StackPanel>
             </Button>
@@ -306,6 +309,15 @@
                 </DataGrid>
               </views:RoundedClipBorder>
             </Grid>
+          </Grid>
+
+          <!-- 域名扫描 -->
+          <Grid x:Name="DomainScanView" Visibility="Collapsed">
+            <Grid.Resources><Style x:Key="DomainScanCheckBoxStyle" TargetType="CheckBox"><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox"><Border x:Name="Box" Width="15" Height="15" CornerRadius="3" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"><TextBlock x:Name="Mark" Text="✓" Foreground="White" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" /></Border><ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}" /><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}" /><Setter TargetName="Mark" Property="Visibility" Value="Visible" /></Trigger><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" /></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style></Grid.Resources>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <StackPanel Grid.Row="0" Margin="0,0,0,17"><TextBlock Text="域名扫描" FontSize="23" FontWeight="SemiBold" /><TextBlock Text="扫描当前已解包分区中的域名和公网 IPv4" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" /></StackPanel>
+            <WrapPanel Grid.Row="1" Margin="0,0,0,12"><Button x:Name="DomainScanStartButton" Content="开始扫描" Click="DomainScanStartButton_Click" Style="{StaticResource PrimaryButton}" /><Button x:Name="DomainScanStopButton" Content="停止扫描" Click="DomainScanStopButton_Click" IsEnabled="False" /><Button x:Name="DomainRewriteButton" Content="修改选中项" Click="DomainRewriteButton_Click" IsEnabled="False" /></WrapPanel>
+            <views:RoundedClipBorder Grid.Row="2" Style="{StaticResource CardStyle}" Padding="0"><DataGrid x:Name="DomainScanGrid" AutoGenerateColumns="False" IsReadOnly="True" SelectionChanged="DomainScanGrid_SelectionChanged"><DataGrid.ContextMenu><ContextMenu><MenuItem Header="复制" Click="DomainCopyMenu_Click" /><MenuItem Header="修改" Click="DomainRewriteMenu_Click" /></ContextMenu></DataGrid.ContextMenu><DataGrid.Columns><DataGridTemplateColumn Header="" Width="36"><DataGridTemplateColumn.CellTemplate><DataTemplate><CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource DomainScanCheckBoxStyle}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="地址" Binding="{Binding Address}" Width="1.1*" /><DataGridTextColumn Header="文件路径" Binding="{Binding FilePath}" Width="2*" /><DataGridTextColumn Header="DNS 状态" Binding="{Binding DnsStatus}" Width="120" /></DataGrid.Columns></DataGrid></views:RoundedClipBorder>
           </Grid>
 
           <!-- 进程和启动 -->

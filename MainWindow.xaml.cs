@@ -31,6 +31,8 @@ namespace WiFitool
         private readonly UpdateService updateService = new UpdateService();
         private readonly DispatcherTimer adbTimer;
         private readonly ObservableCollection<WorkspaceEntry> files = new ObservableCollection<WorkspaceEntry>();
+        private readonly ObservableCollection<DomainScanResult> domainResults = new ObservableCollection<DomainScanResult>();
+        private readonly DomainScanner domainScanner = new DomainScanner();
         private readonly Dictionary<int, List<StartupSource>> startupSourcesByPid = new Dictionary<int, List<StartupSource>>();
         private ImageInfo image;
         private WorkspaceSession workspace;
@@ -77,6 +79,7 @@ namespace WiFitool
             searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
             searchTimer.Tick += async delegate { await ExecuteFileSearchAsync(); };
             FileGrid.ItemsSource = files;
+            DomainScanGrid.ItemsSource = domainResults;
             SizeChanged += MainWindow_SizeChanged;
             Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
             Closing += delegate { adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); if (terminalCancellation != null) terminalCancellation.Cancel(); };
@@ -463,6 +466,7 @@ namespace WiFitool
             AtWebButton.IsEnabled = true;
             UpdateFileSourceButtons();
             LoadFiles();
+            UpdateDomainScanState();
         }
 
         private void LocalSourceButton_Click(object sender, RoutedEventArgs e)
@@ -484,6 +488,7 @@ namespace WiFitool
             if (adbStatus.DeviceState != "online") return;
             adbMode = true; currentRoot = null; currentDirectory = "/";
             HostsButton.IsEnabled = true; ExportFilesButton.IsEnabled = false; AdbdButton.IsEnabled = false; AtWebButton.IsEnabled = false; UpdateFileSourceButtons();
+            UpdateDomainScanState();
             await LoadAdbFilesAsyncTask(showProgress);
         }
 
@@ -565,7 +570,7 @@ namespace WiFitool
             if (adbMode) await LoadAdbFilesAsyncTask(); else LoadFiles();
         }
 
-        private void CloseButton_Click(object sender, RoutedEventArgs e) { if (workspace != null) workspaceService.Cleanup(workspace); workspace = null; image = null; selectedPartition = null; selectedPartitionName = null; currentRoot = null; adbMode = false; PartitionGrid.ItemsSource = null; ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; ClearProcessCache(); files.Clear(); ImageSummary.Text = "未打开固件"; ShowBreadcrumbMessage("未选择来源"); CloseButton.IsEnabled = false; ExportButton.IsEnabled = false; HostsButton.IsEnabled = false; ExportFilesButton.IsEnabled = false; AdbdButton.IsEnabled = false; AtWebButton.IsEnabled = false; UpdateFileSourceButtons(); SetView(OverviewView); StatusText.Text = "项目已关闭"; }
+        private void CloseButton_Click(object sender, RoutedEventArgs e) { if (workspace != null) workspaceService.Cleanup(workspace); workspace = null; image = null; selectedPartition = null; selectedPartitionName = null; currentRoot = null; adbMode = false; PartitionGrid.ItemsSource = null; ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; ClearProcessCache(); files.Clear(); domainResults.Clear(); ImageSummary.Text = "未打开固件"; ShowBreadcrumbMessage("未选择来源"); CloseButton.IsEnabled = false; ExportButton.IsEnabled = false; HostsButton.IsEnabled = false; ExportFilesButton.IsEnabled = false; AdbdButton.IsEnabled = false; AtWebButton.IsEnabled = false; UpdateFileSourceButtons(); UpdateDomainScanState(); SetView(OverviewView); StatusText.Text = "项目已关闭"; }
         private async void ExportButton_Click(object sender, RoutedEventArgs e)
         {
             if (image == null || workspace == null) return;
@@ -581,6 +586,47 @@ namespace WiFitool
         }
 
         private void OverviewNav_Click(object sender, RoutedEventArgs e) { SetView(OverviewView); }
+        private void DomainScanNav_Click(object sender, RoutedEventArgs e) { SetView(DomainScanView); UpdateDomainScanState(); }
+        private async void DomainScanStartButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(currentRoot) || adbMode) { StatusText.Text = "请先选择已解包的本地分区"; return; }
+            domainResults.Clear(); DomainScanStartButton.IsEnabled = false; DomainScanStopButton.IsEnabled = true; BeginTaskProgress(); activeCancellation = new CancellationTokenSource();
+            try
+            {
+                var token = activeCancellation.Token;
+                var found = await Task.Run(() => domainScanner.Scan(currentRoot, token, path => Dispatcher.Invoke(() => StatusText.Text = "正在扫描：" + path)), token);
+                foreach (var item in found) domainResults.Add(item);
+                await Task.Run(() => domainScanner.ValidateDns(found, token, host => Dispatcher.Invoke(() => StatusText.Text = "正在验证：" + host)), token);
+                DomainScanGrid.Items.Refresh(); StatusText.Text = "扫描完成：" + domainResults.Count + " 项";
+            }
+            catch (OperationCanceledException) { StatusText.Text = "扫描已取消"; }
+            catch (Exception ex) { StatusText.Text = "扫描失败：" + ex.Message; }
+            finally { EndTaskProgress(); activeCancellation.Dispose(); activeCancellation = null; DomainScanStartButton.IsEnabled = true; DomainScanStopButton.IsEnabled = false; }
+        }
+        private void DomainScanStopButton_Click(object sender, RoutedEventArgs e) { if (activeCancellation != null) activeCancellation.Cancel(); }
+        private async void DomainRewriteButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RewriteCheckedDomainsAsync();
+        }
+        private void DomainScanGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) { UpdateDomainRewriteButtonState(); }
+        private void DomainCopyMenu_Click(object sender, RoutedEventArgs e) { var item = DomainScanGrid.SelectedItem as DomainScanResult; if (item != null) Clipboard.SetText(item.Address); }
+        private async void DomainRewriteMenu_Click(object sender, RoutedEventArgs e) { await RewriteCheckedDomainsAsync(true); }
+        private async Task RewriteCheckedDomainsAsync(bool allowCurrentSelection = false)
+        {
+            DomainScanGrid.CommitEdit(DataGridEditingUnit.Cell, true); DomainScanGrid.CommitEdit(DataGridEditingUnit.Row, true);
+            var selected = domainResults.Where(x => x.IsChecked).ToList();
+            if (selected.Count == 0 && allowCurrentSelection)
+            {
+                var current = DomainScanGrid.SelectedItem as DomainScanResult;
+                if (current != null) selected.Add(current);
+            }
+            if (selected.Count == 0) { StatusText.Text = "请先勾选要修改的地址"; return; }
+            if (MessageBox.Show(this, "确认修改已勾选的 " + selected.Count + " 个地址？", "域名扫描", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            try { await RunTaskProgressAsync(() => Task.Run(() => selected.ForEach(domainScanner.Rewrite))); DomainScanGrid.Items.Refresh(); MarkSelectedPartitionModified(); StatusText.Text = "已修改 " + selected.Count + " 个地址"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "修改失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+        private void UpdateDomainScanState() { DomainScanStartButton.IsEnabled = !string.IsNullOrEmpty(currentRoot) && !adbMode && activeCancellation == null; UpdateDomainRewriteButtonState(); }
+        private void UpdateDomainRewriteButtonState() { DomainRewriteButton.IsEnabled = domainResults.Count > 0; }
+        private void MarkSelectedPartitionModified() { var partition = image == null ? null : image.Partitions.FirstOrDefault(x => x.Name.Equals(selectedPartitionName, StringComparison.OrdinalIgnoreCase)); if (partition != null) partition.Modified = true; }
         private async void FilesNav_Click(object sender, RoutedEventArgs e)
         {
             SetView(FilesView);
@@ -610,10 +656,12 @@ namespace WiFitool
         {
             OverviewView.Visibility = visible == OverviewView ? Visibility.Visible : Visibility.Collapsed;
             FilesView.Visibility = visible == FilesView ? Visibility.Visible : Visibility.Collapsed;
+            DomainScanView.Visibility = visible == DomainScanView ? Visibility.Visible : Visibility.Collapsed;
             ProcessView.Visibility = visible == ProcessView ? Visibility.Visible : Visibility.Collapsed;
             AdbTerminalView.Visibility = visible == AdbTerminalView ? Visibility.Visible : Visibility.Collapsed;
             OverviewNav.Background = visible == OverviewView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             FilesNav.Background = visible == FilesView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
+            DomainScanNav.Background = visible == DomainScanView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             ProcessNav.Background = visible == ProcessView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             AdbTerminalNav.Background = visible == AdbTerminalView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
         }
