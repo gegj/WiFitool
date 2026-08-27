@@ -954,7 +954,7 @@ namespace WiFitool
 
         private ContextMenu CreateFileMenu()
         {
-            var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var rename = new MenuItem { Header = "重命名" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
+            var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var rename = new MenuItem { Header = "重命名" }; var copyName = new MenuItem { Header = "复制文件名" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
             edit.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && entry.Kind != "目录" && entry.Kind != "符号链接") { if (adbMode) await EditAdbFileAsync(entry); else FileGrid_MouseDoubleClick(null, null); } };
             permissions.Click += async delegate
             {
@@ -989,7 +989,7 @@ namespace WiFitool
                 if (!EnsureAdbWritable("重命名")) return;
                 var entry = FileGrid.SelectedItem as WorkspaceEntry;
                 if (entry == null || entry.Path == "/") return;
-                var name = Prompt("重命名", "新名称：");
+                var name = Prompt("重命名", "新名称：", entry.Name);
                 if (string.IsNullOrWhiteSpace(name)) return;
                 try
                 {
@@ -1008,6 +1008,7 @@ namespace WiFitool
                 }
                 catch (Exception ex) { MessageBox.Show(this, ex.Message, "重命名失败", MessageBoxButton.OK, MessageBoxImage.Error); }
             };
+            copyName.Click += delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null) try { Clipboard.SetText(entry.Name); } catch { } };
             uploadNew.Click += async delegate { if (!EnsureAdbWritable("上传文件")) return; var directory = GetUploadDirectory(); var dialog = new OpenFileDialog { Title = "选择要上传的文件" }; if (dialog.ShowDialog() == true) await UploadSourcesAsync(new[] { dialog.FileName }, directory); };
             uploadFolder.Click += async delegate { if (!EnsureAdbWritable("上传文件夹")) return; var directory = GetUploadDirectory(); string folder; if (FolderDialog.TrySelect(this, "选择要上传的文件夹", out folder)) await UploadSourcesAsync(new[] { folder }, directory); };
             newDirectory.Click += async delegate { if (!EnsureAdbWritable("新建目录")) return; var entry = FileGrid.SelectedItem as WorkspaceEntry; var directory = entry == null ? currentDirectory : entry.Kind == "目录" ? entry.Path : currentDirectory; var name = Prompt("新建目录", "目录名称："); if (string.IsNullOrWhiteSpace(name)) return; try { if (adbMode) { if (MessageBox.Show(this, "确认在设备目录创建：" + directory + "/" + name + "？", "确认创建", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; await RunTaskProgressAsync(async () => { await adbService.CreateDirectoryAsync(adbSerial, directory, name, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.CreateDirectoryAsync(currentRoot, directory, name)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "创建目录失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
@@ -1035,7 +1036,7 @@ namespace WiFitool
                     delete.ToolTip = "设备根分区为只读";
                 }
             };
-            menu.Items.Add(refresh); menu.Items.Add(edit); menu.Items.Add(permissions); menu.Items.Add(rename); menu.Items.Add(uploadNew); menu.Items.Add(uploadFolder); menu.Items.Add(newDirectory); menu.Items.Add(download); menu.Items.Add(delete); return menu;
+            menu.Items.Add(refresh); menu.Items.Add(edit); menu.Items.Add(permissions); menu.Items.Add(rename); menu.Items.Add(copyName); menu.Items.Add(uploadNew); menu.Items.Add(uploadFolder); menu.Items.Add(newDirectory); menu.Items.Add(download); menu.Items.Add(delete); return menu;
         }
 
         private void FileGrid_PreviewDragOver(object sender, DragEventArgs e)
@@ -1201,7 +1202,7 @@ namespace WiFitool
         private static string CombineVirtualPath(string directory, string name) { return directory == "/" ? "/" + name : directory.TrimEnd('/') + "/" + name; }
         private static string ParentVirtualPath(string path) { var normalized = (path ?? "/").TrimEnd('/'); var index = normalized.LastIndexOf('/'); return index <= 0 ? "/" : normalized.Substring(0, index); }
 
-        private string Prompt(string title, string label)
+        private string Prompt(string title, string label, string defaultValue = "")
         {
             var window = new Window
             {
@@ -1261,7 +1262,7 @@ namespace WiFitool
 
             var content = new StackPanel { Margin = new Thickness(0, 20, 0, 20) };
             content.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = (Brush)FindResource("MutedBrush") });
-            var input = new TextBox { Height = 38, Margin = new Thickness(0, 8, 0, 0), VerticalContentAlignment = VerticalAlignment.Center };
+            var input = new TextBox { Text = defaultValue, Height = 38, Margin = new Thickness(0, 8, 0, 0), VerticalContentAlignment = VerticalAlignment.Center };
             content.Children.Add(input);
             Grid.SetRow(content, 1);
             root.Children.Add(content);
@@ -1285,7 +1286,7 @@ namespace WiFitool
             };
             border.Child = root;
             window.Content = border;
-            window.Loaded += delegate { input.Focus(); };
+            window.Loaded += delegate { input.Focus(); input.SelectAll(); };
             return window.ShowDialog() == true ? input.Text : null;
         }
 
