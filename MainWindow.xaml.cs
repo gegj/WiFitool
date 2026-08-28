@@ -608,10 +608,24 @@ namespace WiFitool
         {
             await RewriteCheckedDomainsAsync();
         }
+        private async void DomainWriteDeviceButton_Click(object sender, RoutedEventArgs e) { await RewriteCheckedDomainsAsync(false, true); }
         private void DomainScanGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) { UpdateDomainRewriteButtonState(); }
         private void DomainCopyMenu_Click(object sender, RoutedEventArgs e) { var item = DomainScanGrid.SelectedItem as DomainScanResult; if (item != null) Clipboard.SetText(item.Address); }
-        private async void DomainRewriteMenu_Click(object sender, RoutedEventArgs e) { await RewriteCheckedDomainsAsync(true); }
-        private async Task RewriteCheckedDomainsAsync(bool allowCurrentSelection = false)
+        private async void DomainRewriteMenu_Click(object sender, RoutedEventArgs e) { await RewriteCurrentDomainAsync(false); }
+        private async void DomainWriteDeviceMenu_Click(object sender, RoutedEventArgs e) { await RewriteCurrentDomainAsync(true); }
+        private async Task RewriteCurrentDomainAsync(bool writeDevice)
+        {
+            var item = DomainScanGrid.SelectedItem as DomainScanResult; if (item == null) return;
+            if (MessageBox.Show(this, "确认修改 " + item.Address + "？", "域名扫描", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            try
+            {
+                await RunTaskProgressAsync(() => Task.Run(() => domainScanner.Rewrite(item)));
+                if (writeDevice) foreach (var occurrence in item.Occurrences.GroupBy(x => x.FilePath, StringComparer.OrdinalIgnoreCase)) await adbService.WriteFileAsync(adbSerial, "/" + occurrence.Key.TrimStart('/'), File.ReadAllBytes(occurrence.First().SourcePath), CancellationToken.None);
+                DomainScanGrid.Items.Refresh(); MarkSelectedPartitionModified(); StatusText.Text = writeDevice ? "已修改并写入设备：" + item.Address : "已修改：" + item.Address;
+            }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, "修改失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+        private async Task RewriteCheckedDomainsAsync(bool allowCurrentSelection = false, bool writeDevice = false)
         {
             DomainScanGrid.CommitEdit(DataGridEditingUnit.Cell, true); DomainScanGrid.CommitEdit(DataGridEditingUnit.Row, true);
             var selected = domainResults.Where(x => x.IsChecked).ToList();
@@ -622,9 +636,9 @@ namespace WiFitool
             }
             if (selected.Count == 0) { StatusText.Text = "请先勾选要修改的地址"; return; }
             if (MessageBox.Show(this, "确认修改已勾选的 " + selected.Count + " 个地址？", "域名扫描", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-            try { await RunTaskProgressAsync(() => Task.Run(() => selected.ForEach(domainScanner.Rewrite))); DomainScanGrid.Items.Refresh(); MarkSelectedPartitionModified(); StatusText.Text = "已修改 " + selected.Count + " 个地址"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "修改失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+            try { await RunTaskProgressAsync(() => Task.Run(() => selected.ForEach(domainScanner.Rewrite))); if (writeDevice) foreach (var item in selected.SelectMany(x => x.Occurrences).GroupBy(x => x.FilePath, StringComparer.OrdinalIgnoreCase)) await adbService.WriteFileAsync(adbSerial, "/" + item.Key.TrimStart('/'), File.ReadAllBytes(item.First().SourcePath), CancellationToken.None); DomainScanGrid.Items.Refresh(); MarkSelectedPartitionModified(); StatusText.Text = writeDevice ? "已修改并写入设备" : "已修改 " + selected.Count + " 个地址"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "修改失败", MessageBoxButton.OK, MessageBoxImage.Error); }
         }
-        private void UpdateDomainScanState() { DomainScanStartButton.IsEnabled = !string.IsNullOrEmpty(currentRoot) && !adbMode && activeCancellation == null; UpdateDomainRewriteButtonState(); }
+        private void UpdateDomainScanState() { DomainScanStartButton.IsEnabled = !string.IsNullOrEmpty(currentRoot) && !adbMode && activeCancellation == null; UpdateDomainRewriteButtonState(); DomainWriteDeviceButton.IsEnabled = domainResults.Count > 0 && adbStatus != null && adbStatus.DeviceState == "online" && string.Equals(adbStatus.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase); }
         private void UpdateDomainRewriteButtonState() { DomainRewriteButton.IsEnabled = domainResults.Count > 0; }
         private void MarkSelectedPartitionModified() { var partition = image == null ? null : image.Partitions.FirstOrDefault(x => x.Name.Equals(selectedPartitionName, StringComparison.OrdinalIgnoreCase)); if (partition != null) partition.Modified = true; }
         private async void FilesNav_Click(object sender, RoutedEventArgs e)

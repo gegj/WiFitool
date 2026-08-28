@@ -17,6 +17,20 @@ namespace WiFitool.Services
 
     internal sealed class ToolRunner
     {
+        public Task<ToolResult> RunWithInputAsync(string executable, IEnumerable<string> arguments, string workingDirectory, byte[] input, CancellationToken token)
+        {
+            return Task.Run(() =>
+            {
+                var info = new ProcessStartInfo { FileName = executable, Arguments = BuildArguments(arguments), WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                using (var process = new Process { StartInfo = info })
+                {
+                    if (!process.Start()) throw new InvalidOperationException("无法启动工具：" + executable);
+                    process.StandardInput.BaseStream.Write(input, 0, input.Length); process.StandardInput.Close();
+                    var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit();
+                    return new ToolResult { ExitCode = process.ExitCode, StandardOutput = output, StandardError = error };
+                }
+            }, token);
+        }
         public Task<ToolResult> RunAsync(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output = null, Encoding textEncoding = null)
         {
             return Task.Run(() => Run(executable, arguments, workingDirectory, token, output, textEncoding), token);
