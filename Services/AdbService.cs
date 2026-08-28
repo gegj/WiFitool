@@ -73,7 +73,7 @@ namespace WiFitool.Services
             ValidateSerial(serial);
             if (string.IsNullOrWhiteSpace(command)) throw new InvalidOperationException("命令不能为空。");
             var directory = NormalizeRemotePath(workingDirectory);
-            return await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cd " + QuoteShellArgument(directory) + " && " + command }, adbDirectory, token, null);
+            return await RunShellAsync(serial, "cd " + QuoteShellArgument(directory) + " && " + command, token);
         }
 
         public async Task<ToolResult> ChangeDirectoryAsync(string serial, string workingDirectory, string target, CancellationToken token)
@@ -81,7 +81,15 @@ namespace WiFitool.Services
             ValidateSerial(serial);
             var directory = NormalizeRemotePath(workingDirectory);
             var targetDirectory = string.IsNullOrWhiteSpace(target) ? "/" : target.Trim();
-            return await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cd " + QuoteShellArgument(directory) + " && cd " + targetDirectory + " && pwd" }, adbDirectory, token, null);
+            if (targetDirectory.IndexOfAny(new[] { '\r', '\n', ';', '&', '|', '`' }) >= 0) throw new InvalidOperationException("目录路径包含不允许的字符。");
+            return await RunShellAsync(serial, "cd " + QuoteShellArgument(directory) + " && cd " + QuoteShellArgument(targetDirectory) + " && pwd", token);
+        }
+
+        private async Task<ToolResult> RunShellAsync(string serial, string command, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            if (string.IsNullOrWhiteSpace(command)) throw new InvalidOperationException("Shell 命令不能为空。");
+            return await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null);
         }
 
         public async Task<List<ProcessInfo>> ListProcessesAsync(string serial, CancellationToken token)
