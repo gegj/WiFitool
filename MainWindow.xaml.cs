@@ -613,9 +613,17 @@ namespace WiFitool
         private void DomainCopyMenu_Click(object sender, RoutedEventArgs e) { var item = DomainScanGrid.SelectedItem as DomainScanResult; if (item != null) Clipboard.SetText(item.Address); }
         private async void DomainRewriteMenu_Click(object sender, RoutedEventArgs e) { await RewriteCurrentDomainAsync(false); }
         private async void DomainWriteDeviceMenu_Click(object sender, RoutedEventArgs e) { await RewriteCurrentDomainAsync(true); }
+        private void DomainScanContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            var menu = sender as ContextMenu;
+            if (menu == null) return;
+            var writeItem = menu.Items.OfType<MenuItem>().FirstOrDefault(x => x.Header as string == "写入设备");
+            if (writeItem != null) writeItem.IsEnabled = domainResults.Count > 0 && adbStatus != null && adbStatus.DeviceState == "online" && string.Equals(adbStatus.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase);
+        }
         private async Task RewriteCurrentDomainAsync(bool writeDevice)
         {
             var item = DomainScanGrid.SelectedItem as DomainScanResult; if (item == null) return;
+            if (writeDevice && (adbStatus == null || adbStatus.DeviceState != "online" || !string.Equals(adbStatus.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase))) { EnsureAdbWritable("写入设备"); return; }
             if (MessageBox.Show(this, "确认修改 " + item.Address + "？", "域名扫描", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             try
             {

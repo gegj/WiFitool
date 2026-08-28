@@ -40,6 +40,7 @@ schemas.xmlsoap.org
 0carnet.telemach.hr
 0webuk.mundio.com
 Rikers.org
+digicert.com
 
 [ignore_ips]
 8.8.8.8
@@ -282,7 +283,6 @@ CFD
 CG
 CH
 CHANEL
-CHANNEL
 CHARITY
 CHASE
 CHAT
