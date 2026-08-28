@@ -25,9 +25,40 @@ namespace WiFitool.Services
                 using (var process = new Process { StartInfo = info })
                 {
                     if (!process.Start()) throw new InvalidOperationException("无法启动工具：" + executable);
-                    process.StandardInput.BaseStream.Write(input, 0, input.Length); process.StandardInput.Close();
-                    var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit();
-                    return new ToolResult { ExitCode = process.ExitCode, StandardOutput = output, StandardError = error };
+                    var stdout = new StringBuilder();
+                    var stderr = new StringBuilder();
+                    var outputLock = new object();
+                    process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs args)
+                    {
+                        if (args.Data != null) lock (outputLock) stdout.AppendLine(args.Data);
+                    };
+                    process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs args)
+                    {
+                        if (args.Data != null) lock (outputLock) stderr.AppendLine(args.Data);
+                    };
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                    try
+                    {
+                        if (input != null && input.Length > 0) process.StandardInput.BaseStream.Write(input, 0, input.Length);
+                    }
+                    finally
+                    {
+                        process.StandardInput.Close();
+                    }
+                    while (!process.WaitForExit(100))
+                    {
+                        if (token.IsCancellationRequested)
+                        {
+                            TryKillTree(process);
+                            token.ThrowIfCancellationRequested();
+                        }
+                    }
+                    process.WaitForExit();
+                    lock (outputLock)
+                    {
+                        return new ToolResult { ExitCode = process.ExitCode, StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
+                    }
                 }
             }, token);
         }
