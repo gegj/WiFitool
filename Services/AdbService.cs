@@ -67,6 +67,12 @@ namespace WiFitool.Services
             var rootFsMode = await ReadRootFsModeAsync(target, token);
             return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, RootFsMode = rootFsMode, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = spaces.FirstOrDefault(x => x.Mount == "/mnt/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/data") };
         }
+        public async Task RebootAsync(string serial, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "reboot" }, adbDirectory, token, null);
+            if (result.ExitCode != 0) throw new InvalidOperationException("设备重启命令失败：" + result.StandardError);
+        }
 
         public async Task<ToolResult> ExecuteShellCommandAsync(string serial, string workingDirectory, string command, CancellationToken token)
         {

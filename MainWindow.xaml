@@ -44,7 +44,7 @@
           </StackPanel>
           <StackPanel x:Name="HeaderActionsPanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,20,0">
             <Button x:Name="OpenButton" Content="打开固件" Click="OpenButton_Click" Style="{StaticResource PrimaryButton}" />
-            <Button x:Name="CloseButton" Content="关闭项目" Click="CloseButton_Click" IsEnabled="False" />
+            <Button x:Name="CloseButton" Content="关闭固件" Click="CloseButton_Click" IsEnabled="False" />
             <Button x:Name="AdbExportButton" Content="一键提取固件" Click="AdbExportButton_Click" IsEnabled="False" />
           </StackPanel>
           <Button x:Name="AdbStatusButton" Grid.Column="2" Click="AdbStatusButton_Click" Background="{DynamicResource PanelAltBrush}" BorderBrush="{DynamicResource BorderBrush}" Padding="10,5" Height="52" Width="258" Margin="0" HorizontalContentAlignment="Stretch" ToolTip="查看 ADB 设备详情">
@@ -63,12 +63,15 @@
               <Border.Effect><DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.38" Color="#000000" /></Border.Effect>
               <StackPanel>
                 <Grid Margin="0,0,0,10">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions>
                   <StackPanel>
                     <TextBlock x:Name="AdbDeviceTypeText" Text="设备类型未知" FontSize="14" FontWeight="SemiBold" />
                     <TextBlock x:Name="AdbVersionText" Text="软件版本未知" Foreground="{DynamicResource TextBrush}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" Cursor="Hand" ToolTip="点击复制软件版本" MouseLeftButtonUp="AdbVersionText_MouseLeftButtonUp" />
                   </StackPanel>
-                  <Button x:Name="AdbRefreshButton" Grid.Column="1" Content="⟳  重新检测" Click="AdbRefreshButton_Click" Height="34" Padding="10,4" Margin="8,0,0,0" />
+                  <StackPanel Grid.Column="1" Width="70" HorizontalAlignment="Right">
+                    <Button x:Name="AdbRefreshButton" Content="刷新状态" Click="AdbRefreshButton_Click" Height="34" Width="70" MinWidth="70" MaxWidth="70" Padding="2,4" Margin="0" HorizontalAlignment="Right" HorizontalContentAlignment="Center" />
+                    <Button x:Name="AdbRebootButton" Content="重启设备" Click="AdbRebootButton_Click" Height="34" Width="70" MinWidth="70" MaxWidth="70" Padding="2,4" Margin="0,6,0,0" HorizontalAlignment="Right" HorizontalContentAlignment="Center" />
+                  </StackPanel>
                 </Grid>
                 <Border Height="1" Background="{DynamicResource BorderBrush}" />
                 <Grid Margin="0,11,0,0">

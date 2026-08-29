@@ -570,7 +570,12 @@ namespace WiFitool
             if (adbMode) await LoadAdbFilesAsyncTask(); else LoadFiles();
         }
 
-        private void CloseButton_Click(object sender, RoutedEventArgs e) { if (workspace != null) workspaceService.Cleanup(workspace); workspace = null; image = null; selectedPartition = null; selectedPartitionName = null; currentRoot = null; adbMode = false; PartitionGrid.ItemsSource = null; ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; ClearProcessCache(); files.Clear(); domainResults.Clear(); ImageSummary.Text = "未打开固件"; ShowBreadcrumbMessage("未选择来源"); CloseButton.IsEnabled = false; ExportButton.IsEnabled = false; HostsButton.IsEnabled = false; ExportFilesButton.IsEnabled = false; AdbdButton.IsEnabled = false; AtWebButton.IsEnabled = false; UpdateFileSourceButtons(); UpdateDomainScanState(); SetView(OverviewView); StatusText.Text = "项目已关闭"; }
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (image != null && image.Partitions.Any(x => x.Modified) && MessageBox.Show(this, "未导出的修改将丢失，是否继续关闭？", "关闭项目", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            if (workspace != null) workspaceService.Cleanup(workspace);
+            workspace = null; image = null; selectedPartition = null; selectedPartitionName = null; currentRoot = null; adbMode = false; PartitionGrid.ItemsSource = null; ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; ClearProcessCache(); files.Clear(); domainResults.Clear(); ImageSummary.Text = "未打开固件"; ShowBreadcrumbMessage("未选择来源"); CloseButton.IsEnabled = false; ExportButton.IsEnabled = false; HostsButton.IsEnabled = false; ExportFilesButton.IsEnabled = false; AdbdButton.IsEnabled = false; AtWebButton.IsEnabled = false; UpdateFileSourceButtons(); UpdateDomainScanState(); SetView(OverviewView); StatusText.Text = "项目已关闭";
+        }
         private async void ExportButton_Click(object sender, RoutedEventArgs e)
         {
             if (image == null || workspace == null) return;
@@ -796,6 +801,15 @@ namespace WiFitool
         {
             await CheckAdbStatusAsync(true);
             AdbDetailsPopup.IsOpen = true;
+        }
+        private async void AdbRebootButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (adbStatus == null || adbStatus.DeviceState != "online" || string.IsNullOrWhiteSpace(adbSerial)) { MessageBox.Show(this, "请先连接在线 ADB 设备。", "重启设备", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            if (MessageBox.Show(this, "确认重启当前 ADB 设备吗？设备上的未保存操作可能会中断。", "重启设备", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            AdbRebootButton.IsEnabled = false;
+            try { await adbService.RebootAsync(adbSerial, CancellationToken.None); StatusText.Text = "正在重启设备…"; AdbDetailsPopup.IsOpen = false; }
+            catch (Exception ex) { MessageBox.Show(this, "重启设备失败：" + ex.Message, "重启设备", MessageBoxButton.OK, MessageBoxImage.Error); }
+            finally { AdbRebootButton.IsEnabled = adbStatus != null && adbStatus.DeviceState == "online"; }
         }
 
         private async void HostsButton_Click(object sender, RoutedEventArgs e) { await OpenHostsAsync(); }
@@ -1507,6 +1521,7 @@ namespace WiFitool
                     if (terminalCancellation != null) terminalCancellation.Cancel();
                 }
                 UpdateAdbDetails(state);
+                AdbRebootButton.IsEnabled = state.DeviceState == "online";
                 AdbExportButton.IsEnabled = state.DeviceState == "online";
                 if (state.DeviceState == "online") { AdbDot.Fill = (Brush)FindResource("SuccessBrush"); AdbStatusText.Text = "ADB 设备在线"; AdbStatusSummaryText.Text = "系统 " + FormatAdbSpace(state.System == null ? 0 : state.System.FreeBytes) + " · 用户 " + FormatAdbSpace(state.Userdata == null ? 0 : state.Userdata.FreeBytes); ProcessDeviceText.Text = "设备在线"; RefreshProcessButton.IsEnabled = true; }
                 else { AdbDot.Fill = (Brush)FindResource("DisabledBrush"); AdbStatusText.Text = state.DeviceState == "no-device" ? "ADB 等待设备" : state.DeviceState == "offline" ? "ADB 设备离线" : "ADB 服务未启动"; AdbStatusSummaryText.Text = "等待设备连接"; ProcessDeviceText.Text = "未连接设备"; RefreshProcessButton.IsEnabled = false; }
