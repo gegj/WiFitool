@@ -13,10 +13,11 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <StartupObject>WiFitool.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.36.28</Version>
-    <FileVersion>0.36.28.0</FileVersion>
-    <AssemblyVersion>0.36.28.0</AssemblyVersion>
+    <Version>0.36.30</Version>
+    <FileVersion>0.36.30.0</FileVersion>
+    <AssemblyVersion>0.36.30.0</AssemblyVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <GeneratedAssemblyInfoFile>$(IntermediateOutputPath)GeneratedAssemblyInfo.cs</GeneratedAssemblyInfoFile>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -57,15 +58,25 @@
       <SubType>Designer</SubType>
     </Page>
     <Compile Include="App.xaml.cs" />
-    <Compile Include="AssemblyInfo.cs" />
     <Compile Include="MainWindow.xaml.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Models\*.cs" />
     <Compile Include="Services\*.cs" />
     <Compile Include="Views\*.cs" />
+    <Compile Include="$(GeneratedAssemblyInfoFile)" />
     <None Include="app.manifest" />
     <Resource Include="Assets\app.ico" />
     <Content Include="Assets\domain_scan_rules.txt" />
   </ItemGroup>
+  <Target Name="GenerateVersionAssemblyInfo" BeforeTargets="CoreCompile">
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <ItemGroup>
+      <VersionAssemblyInfoLines Include="using System.Reflection%3B" />
+      <VersionAssemblyInfoLines Include="[assembly: AssemblyVersion(&quot;$(AssemblyVersion)&quot;)]" />
+      <VersionAssemblyInfoLines Include="[assembly: AssemblyFileVersion(&quot;$(FileVersion)&quot;)]" />
+      <VersionAssemblyInfoLines Include="[assembly: AssemblyInformationalVersion(&quot;$(Version)&quot;)]" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(GeneratedAssemblyInfoFile)" Overwrite="true" Lines="@(VersionAssemblyInfoLines)" Encoding="UTF-8" />
+  </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

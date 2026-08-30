@@ -315,8 +315,10 @@ namespace WiFitool
         {
             string fileName;
             var isFirmware = TryGetDroppedFirmware(e, out fileName);
-            var canUpload = !isFirmware && IsFileGridDropTarget(e.OriginalSource) && CanUploadToCurrentSource() && e.Data.GetDataPresent(DataFormats.FileDrop);
-            FirmwareDropOverlay.Visibility = isFirmware || canUpload ? Visibility.Visible : Visibility.Collapsed;
+            var isFileDrop = !isFirmware && IsFileGridDropTarget(e.OriginalSource) && e.Data.GetDataPresent(DataFormats.FileDrop);
+            var readOnlyDevice = isFileDrop && IsAdbReadOnly();
+            var canUpload = isFileDrop && CanUploadToCurrentSource();
+            FirmwareDropOverlay.Visibility = isFirmware || canUpload || readOnlyDevice ? Visibility.Visible : Visibility.Collapsed;
             if (isFirmware)
             {
                 FirmwareDropText.Text = "松开以打开固件";
@@ -328,6 +330,13 @@ namespace WiFitool
             {
                 FirmwareDropText.Text = "松开以上传";
                 e.Effects = DragDropEffects.Copy;
+                return;
+            }
+            if (readOnlyDevice)
+            {
+                FirmwareDropText.Text = "只读设备不可上传";
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
                 return;
             }
             if (IsFileGridDropTarget(e.OriginalSource)) return;
@@ -1251,7 +1260,7 @@ namespace WiFitool
             {
                 var length = new FileInfo(sourcePath).Length;
                 var free = await adbService.GetFreeBytesAsync(targetSerial, targetDirectory, token);
-                var direct = free < length + 1024L * 1024L;
+                var direct = free < length;
                 if (direct && MessageBox.Show(this, "设备可用空间为 " + FormatSize(free) + "，不足以安全上传 " + targetName + "。\n直接写入可减少临时空间占用，但中断或失败可能损坏目标文件。是否继续？", "设备空间不足", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
                 await adbService.UploadFileAsync(targetSerial, targetPath, sourcePath, direct, token);
             }
