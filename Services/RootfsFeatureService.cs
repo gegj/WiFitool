@@ -114,13 +114,34 @@ namespace WiFitool.Services
             var path = Path.Combine(root, virtualPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(path)) return;
             var text = File.ReadAllText(path);
-            if (text.IndexOf(":9090/at.html", StringComparison.OrdinalIgnoreCase) >= 0) return;
+            var normalized = NormalizeMenuEntries(text);
+            if (normalized != null)
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.WriteAllText(path, normalized, Encoding.UTF8);
+                return;
+            }
             var index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
             if (index < 0) return;
             var insert = "<li><a href=\":9090/at.html\" data-trans=\"AT_WEB\" class=\"c008AFF\"></a></li>";
             var position = index + marker.Length;
             File.SetAttributes(path, FileAttributes.Normal);
             File.WriteAllText(path, text.Substring(0, position) + insert + text.Substring(position), Encoding.UTF8);
+        }
+
+        private static string NormalizeMenuEntries(string text)
+        {
+            var changed = false;
+            var result = Regex.Replace(text, @"<a\b[^>]*>", delegate(Match match)
+            {
+                var tag = match.Value;
+                if (!Regex.IsMatch(tag, "\\bhref\\s*=\\s*[\'\\\"](?:/?(?:at|debug|at_info|atweb|tools)\\.html)[\'\\\"]", RegexOptions.IgnoreCase)) return tag;
+                var updated = Regex.Replace(tag, "(\\bhref\\s*=\\s*[\'\\\"])(?:/?(?:at|debug|at_info|atweb|tools)\\.html)([\'\\\"])", "$1:9090/at.html$2", RegexOptions.IgnoreCase);
+                updated = Regex.Replace(updated, "(port\\s*=\\s*)8080\\b", "$19090", RegexOptions.IgnoreCase);
+                if (!string.Equals(tag, updated, StringComparison.Ordinal)) changed = true;
+                return updated;
+            }, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            return changed ? result : null;
         }
     }
 }

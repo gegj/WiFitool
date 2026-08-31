@@ -907,7 +907,21 @@ namespace WiFitool
         private async Task InsertAdbMenuAsync(string remote, string marker, CancellationToken token)
         {
             if (!await adbService.RemoteFileExistsAsync(adbSerial, remote, token)) return;
-            var text = Encoding.UTF8.GetString(await adbService.ReadFileAsync(adbSerial, remote, token)); if (text.IndexOf(":9090/at.html", StringComparison.OrdinalIgnoreCase) >= 0) return;
+            var text = Encoding.UTF8.GetString(await adbService.ReadFileAsync(adbSerial, remote, token));
+            var normalized = Regex.Replace(text, @"<a\b[^>]*>", delegate(Match match)
+            {
+                var tag = match.Value;
+                if (!Regex.IsMatch(tag, "\\bhref\\s*=\\s*[\'\\\"](?:/?(?:at|debug|at_info|atweb|tools)\\.html)[\'\\\"]", RegexOptions.IgnoreCase)) return tag;
+                var updated = Regex.Replace(tag, "(\\bhref\\s*=\\s*[\'\\\"])(?:/?(?:at|debug|at_info|atweb|tools)\\.html)([\'\\\"])", "$1:9090/at.html$2", RegexOptions.IgnoreCase);
+                updated = Regex.Replace(updated, "(port\\s*=\\s*)8080\\b", "$19090", RegexOptions.IgnoreCase);
+                return updated;
+            }, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (!string.Equals(text, normalized, StringComparison.Ordinal))
+            {
+                await adbService.WriteFileAsync(adbSerial, remote, Encoding.UTF8.GetBytes(normalized), token);
+                return;
+            }
+            if (text.IndexOf(":9090/at.html", StringComparison.OrdinalIgnoreCase) >= 0) return;
             var index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase); if (index < 0) return;
             var insert = "<li><a href=\":9090/at.html\" data-trans=\"AT_WEB\" class=\"c008AFF\"></a></li>";
             await adbService.WriteFileAsync(adbSerial, remote, Encoding.UTF8.GetBytes(text.Substring(0, index + marker.Length) + insert + text.Substring(index + marker.Length)), token);
