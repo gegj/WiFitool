@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -519,7 +520,8 @@ namespace WiFitool
             AdbSourceButton.IsEnabled = adbStatus.DeviceState == "online";
             ExportFilesButton.Visibility = localExportAvailable ? Visibility.Visible : Visibility.Collapsed;
             AdbdButton.Visibility = localExportAvailable ? Visibility.Visible : Visibility.Collapsed;
-            AtWebButton.Visibility = localExportAvailable ? Visibility.Visible : Visibility.Collapsed;
+            AtWebButton.Visibility = localExportAvailable || (adbMode && adbStatus.DeviceState == "online") ? Visibility.Visible : Visibility.Collapsed;
+            AtWebButton.IsEnabled = localExportAvailable || (adbMode && adbStatus.DeviceState == "online" && !IsAdbReadOnly());
             ExportButton.Visibility = localExportAvailable ? Visibility.Visible : Visibility.Collapsed;
             ExportButton.IsEnabled = localExportAvailable;
             LocalSourceButton.Background = !adbMode && localAvailable ? (Brush)FindResource("AccentBrush") : (Brush)FindResource("PanelAltBrush");
@@ -847,7 +849,75 @@ namespace WiFitool
         private void IncludeSymlinksCheckBox_Checked(object sender, RoutedEventArgs e) { includeSymlinks = true; }
         private void IncludeSymlinksCheckBox_Unchecked(object sender, RoutedEventArgs e) { includeSymlinks = false; }
         private async void AdbdButton_Click(object sender, RoutedEventArgs e) { if (adbMode || selectedPartition == null || workspace == null) return; try { await RunTaskProgressAsync(() => rootfsFeatureService.ApplyAdbdAsync(selectedPartition, workspace)); StatusText.Text = "adbd 已固化"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "固化 adbd 失败", MessageBoxButton.OK, MessageBoxImage.Error); } }
-        private async void AtWebButton_Click(object sender, RoutedEventArgs e) { if (adbMode || selectedPartition == null || workspace == null) return; try { await RunTaskProgressAsync(() => rootfsFeatureService.ApplyAtWebAsync(selectedPartition, workspace)); StatusText.Text = "ATWeb 已添加"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "添加 ATWeb 失败", MessageBoxButton.OK, MessageBoxImage.Error); } }
+        private async void AtWebButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (adbMode)
+                {
+                    if (!EnsureAdbWritable("刷入 ATWeb")) return;
+                    await RunTaskProgressAsync(() => ApplyAtWebToDeviceAsync());
+                    await LoadAdbFilesAsyncTask(false);
+                    StatusText.Text = "ATWeb 已刷入设备";
+                }
+                else
+                {
+                    if (selectedPartition == null || workspace == null) return;
+                    await RunTaskProgressAsync(() => rootfsFeatureService.ApplyAtWebAsync(selectedPartition, workspace));
+                    StatusText.Text = "ATWeb 已添加";
+                }
+            }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, "添加 ATWeb 失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+
+        private async Task ApplyAtWebToDeviceAsync()
+        {
+            var token = CancellationToken.None;
+            var processNames = new[] { "atweb", "webserver", "zte_webadmin", "zte_webdaemon", "at_server" };
+            await adbService.StopProcessesByNameAsync(adbSerial, processNames, token);
+            var files = new[] { "/sbin/daemon.sh", "/sbin/zte_webadmin.sh", "/sbin/webserver", "/sbin/atweb", "/bin/at_server", "/sbin/zte_webdaemon", "/sbin/zte_webadmin", "/etc_ro/web/at.html", "/etc_ro/web/debug.html", "/etc_ro/web/at_info.html", "/etc_ro/web/atweb.html", "/etc_ro/web/tools.html" };
+            foreach (var path in files) await adbService.DeleteRemoteAsync(adbSerial, path, false, token);
+            await CleanAdbStartupFileAsync("/etc/rc", token);
+            await CleanAdbStartupFileAsync("/sbin/rm_dev.sh", token);
+            var atwebRoot = Path.Combine(ToolEnvironment.Root, "atweb");
+            await EnsureAdbLibraryAsync("/lib/libamt.so", Path.Combine(atwebRoot, "libamt.so"), token);
+            await EnsureAdbLibraryAsync("/lib/libcpnv.so", Path.Combine(atwebRoot, "libcpnv.so"), token);
+            await adbService.UploadFileAsync(adbSerial, "/sbin/atweb", Path.Combine(atwebRoot, "atweb"), false, token);
+            await adbService.UploadFileAsync(adbSerial, "/etc_ro/web/at.html", Path.Combine(atwebRoot, "at.html"), false, token);
+            await adbService.SetModeAsync(adbSerial, "/sbin/atweb", Convert.ToInt32("775", 8), false, token);
+            foreach (var item in new[] { new[] { "/etc_ro/web/subpg/main.html", "data-trans=\"quick_setting\" class=\"cFFCE2B\"></a></li>" }, new[] { "/etc_ro/web/subpg/sim_abnormal.html", "href=\"#wlan_sleep\"></a></li>" }, new[] { "/etc_ro/web/tmpl/home.html", "data-trans=\"quick_setting\"></a></li>" }, new[] { "/etc_ro/web/tmpl/nosimcard.html", "data-trans=\"advanced_settings\"></a></li>" } }) await InsertAdbMenuAsync(item[0], item[1], token);
+            await AppendAdbStartupAsync("/sbin/rm_dev.sh", "(sleep 20; /sbin/atweb >/dev/null 2>&1) &", token);
+        }
+
+        private async Task EnsureAdbLibraryAsync(string remote, string local, CancellationToken token)
+        {
+            if (!await adbService.RemoteFileExistsAsync(adbSerial, remote, token)) await adbService.UploadFileAsync(adbSerial, remote, local, false, token);
+        }
+
+        private async Task CleanAdbStartupFileAsync(string remote, CancellationToken token)
+        {
+            if (!await adbService.RemoteFileExistsAsync(adbSerial, remote, token)) return;
+            var text = Encoding.UTF8.GetString(await adbService.ReadFileAsync(adbSerial, remote, token));
+            var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n').ToList(); var remove = new HashSet<int>();
+            var keys = new[] { "webserver", "daemon.sh", "zte_webadmin.sh", "atweb", "zte_webadmin", "zte_webdaemon" };
+            for (var i = 0; i < lines.Count; i++) if (keys.Any(x => lines[i].IndexOf(x, StringComparison.OrdinalIgnoreCase) >= 0)) { remove.Add(i); for (var p = i - 1; p >= 0 && string.IsNullOrWhiteSpace(lines[p]); p--) { } if (i > 0 && Regex.IsMatch(lines[i - 1].Trim(), @"^sleep\s+\d+", RegexOptions.IgnoreCase)) remove.Add(i - 1); }
+            if (remove.Count > 0) await adbService.WriteFileAsync(adbSerial, remote, Encoding.UTF8.GetBytes(string.Join("\n", lines.Where((x, i) => !remove.Contains(i)))), token);
+        }
+
+        private async Task InsertAdbMenuAsync(string remote, string marker, CancellationToken token)
+        {
+            if (!await adbService.RemoteFileExistsAsync(adbSerial, remote, token)) return;
+            var text = Encoding.UTF8.GetString(await adbService.ReadFileAsync(adbSerial, remote, token)); if (text.IndexOf(":9090/at.html", StringComparison.OrdinalIgnoreCase) >= 0) return;
+            var index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase); if (index < 0) return;
+            var insert = "<li><a href=\":9090/at.html\" data-trans=\"AT_WEB\" class=\"c008AFF\"></a></li>";
+            await adbService.WriteFileAsync(adbSerial, remote, Encoding.UTF8.GetBytes(text.Substring(0, index + marker.Length) + insert + text.Substring(index + marker.Length)), token);
+        }
+
+        private async Task AppendAdbStartupAsync(string remote, string line, CancellationToken token)
+        {
+            if (!await adbService.RemoteFileExistsAsync(adbSerial, remote, token)) return;
+            var text = Encoding.UTF8.GetString(await adbService.ReadFileAsync(adbSerial, remote, token)); if (text.IndexOf(line, StringComparison.Ordinal) < 0) await adbService.WriteFileAsync(adbSerial, remote, Encoding.UTF8.GetBytes(text.TrimEnd('\r', '\n') + "\n" + line + "\n"), token);
+        }
         private async void RefreshProcessButton_Click(object sender, RoutedEventArgs e)
         {
             if (adbStatus.DeviceState != "online") return;

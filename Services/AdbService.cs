@@ -142,6 +142,17 @@ namespace WiFitool.Services
             ValidateSerial(serial); if (pid <= 1) throw new InvalidOperationException("PID 1 和系统根进程受保护，不能停止。"); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "kill", "-TERM", pid.ToString(CultureInfo.InvariantCulture) }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("停止进程失败：" + result.StandardError);
         }
 
+        public async Task StopProcessesByNameAsync(string serial, IEnumerable<string> names, CancellationToken token)
+        {
+            var wanted = new HashSet<string>(names ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            if (wanted.Count == 0) return;
+            foreach (var process in await ListProcessesAsync(serial, token))
+            {
+                if (!wanted.Contains(process.Name) && !wanted.Contains(Path.GetFileName(process.ExecutablePath ?? ""))) continue;
+                if (process.Pid > 1) await StopProcessAsync(serial, process.Pid, token);
+            }
+        }
+
         private async Task<List<StartupSource>> ScanStartupSourcesAsync(string serial, CancellationToken token)
         {
             var result = new List<StartupSource>();
