@@ -18,9 +18,26 @@ namespace WiFitool.Services
         private static readonly string[] requiredFiles =
         {
             @"adb\adb.exe",
+            @"adb\AdbWinApi.dll",
+            @"adb\AdbWinUsbApi.dll",
+            @"adbd\adbd",
+            @"atweb\atweb",
+            @"atweb\at.html",
+            @"atweb\libamt.so",
+            @"atweb\libcpnv.so",
             @"squashfs\unsquashfs.exe",
             @"squashfs\mksquashfs.exe",
+            @"squashfs\msys-2.0.dll",
+            @"squashfs\msys-gcc_s-seh-1.dll",
+            @"squashfs\msys-lz4-1.dll",
+            @"squashfs\msys-lzma-5.dll",
+            @"squashfs\msys-lzo2-2.dll",
+            @"squashfs\msys-z.dll",
+            @"squashfs\msys-zstd-1.dll",
             @"mtd-utils\mkfs.jffs2.exe",
+            @"mtd-utils\msys-2.0.dll",
+            @"mtd-utils\msys-lzo2-2.dll",
+            @"mtd-utils\msys-z.dll",
             @"jefferson\jefferson.exe"
         };
         private static readonly HttpClient client = CreateClient();
