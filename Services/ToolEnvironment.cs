@@ -11,9 +11,9 @@ namespace WiFitool.Services
     internal static class ToolEnvironment
     {
         // 工具包下载地址；主地址失败时使用兜底地址。
-        private const string PrimaryDownloadUrl = "https://ilz.ly93.cc/531/39090988540/tools.zip";
+        private const string PrimaryDownloadUrl = "https://ilz.ly93.cc/531/39559978731/tools.zip";
         private const string FallbackDownloadUrl = "https://github.com/gegj/WiFitool/raw/refs/heads/main/tools.zip";
-        private const string ToolsPackageSha256 = "5BD9496B631AAF490B58992DCE8940D7447986CFAC96BD084AF42C4D5BAFB72D";
+        private const string ToolsPackageSha256 = "C88259495BAD8FEFB3BE9A0011198336148756809AAC5EA4C37D6D5666B2A6C7";
 
         private static readonly string[] requiredFiles =
         {
