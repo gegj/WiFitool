@@ -46,6 +46,7 @@ namespace WiFitool
             AllowsTransparency = true;
             Background = Brushes.Transparent;
             ShowInTaskbar = false;
+            Owner = Application.Current.MainWindow;
 
             var border = new Border
             {

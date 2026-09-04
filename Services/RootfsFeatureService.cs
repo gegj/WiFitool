@@ -123,7 +123,7 @@ namespace WiFitool.Services
             }
             var index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
             if (index < 0) return;
-            var insert = "<li><a href=\":9090/at.html\" data-trans=\"AT_WEB\" class=\"c008AFF\"></a></li>";
+            var insert = "<li><a href=\"javascript:window.location.href=window.location.protocol+'//'+window.location.hostname+':9090/at.html'\" data-trans=\"ATWEB\" class=\"c008AFF\"></a></li>";
             var position = index + marker.Length;
             File.SetAttributes(path, FileAttributes.Normal);
             File.WriteAllText(path, text.Substring(0, position) + insert + text.Substring(position), Encoding.UTF8);
@@ -136,7 +136,7 @@ namespace WiFitool.Services
             {
                 var tag = match.Value;
                 if (!Regex.IsMatch(tag, "\\bhref\\s*=\\s*[\'\\\"](?:/?(?:at|debug|at_info|atweb|tools)\\.html)[\'\\\"]", RegexOptions.IgnoreCase)) return tag;
-                var updated = Regex.Replace(tag, "(\\bhref\\s*=\\s*[\'\\\"])(?:/?(?:at|debug|at_info|atweb|tools)\\.html)([\'\\\"])", "$1:9090/at.html$2", RegexOptions.IgnoreCase);
+                var updated = Regex.Replace(tag, "(\\bhref\\s*=\\s*[\'\\\"])(?:/?(?:at|debug|at_info|atweb|tools)\\.html)([\'\\\"])", "$1javascript:window.location.href=window.location.protocol+'//'+window.location.hostname+':9090/at.html'$2", RegexOptions.IgnoreCase);
                 updated = Regex.Replace(updated, "(port\\s*=\\s*)8080\\b", "$19090", RegexOptions.IgnoreCase);
                 if (!string.Equals(tag, updated, StringComparison.Ordinal)) changed = true;
                 return updated;
