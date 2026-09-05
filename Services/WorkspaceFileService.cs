@@ -173,9 +173,13 @@ namespace WiFitool.Services
             });
         }
 
-        public Task ExportAllAsync(string rootPath, string destination, bool includeEmptyDirectories, bool includeSymlinks)
+        public Task ExportMergedAsync(string rootfsPath, string userdataPath, string destination, bool includeRootfs, bool includeUserdata, bool includeSymlinks)
         {
-            return Task.Run(delegate { CopyDirectoryWithMetadata(rootPath, destination, includeEmptyDirectories, includeSymlinks); });
+            return Task.Run(delegate
+            {
+                if (includeRootfs) CopyDirectoryWithMetadata(rootfsPath, destination, includeSymlinks);
+                if (includeUserdata) CopyDirectoryWithMetadata(userdataPath, Path.Combine(destination, "mnt", "userdata"), includeSymlinks);
+            });
         }
 
         public Task DownloadDirectoryAsync(string rootPath, string virtualPath, string destination)
@@ -184,7 +188,7 @@ namespace WiFitool.Services
             {
                 var source = Resolve(rootPath, virtualPath, true);
                 if (!Directory.Exists(source)) throw new InvalidOperationException("目标不是文件夹。");
-                CopyDirectory(source, destination, true);
+                CopyDirectoryForDownload(source, destination);
             });
         }
 
@@ -251,10 +255,9 @@ namespace WiFitool.Services
         private static Encoding EncodingFor(string name) { if (name == "UTF-16 LE") return new UnicodeEncoding(false, false); if (name == "UTF-16 BE") return new UnicodeEncoding(true, false); if (name == "GB18030") return Encoding.GetEncoding(54936); return new UTF8Encoding(false); }
         private static byte[] Prepend(byte[] prefix, byte[] value) { var result = new byte[prefix.Length + value.Length]; Buffer.BlockCopy(prefix, 0, result, 0, prefix.Length); Buffer.BlockCopy(value, 0, result, prefix.Length, value.Length); return result; }
         private static string NormalizeLineEndings(string text, string lineEnding) { var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n'); if (lineEnding == "CRLF") return normalized.Replace("\n", "\r\n"); if (lineEnding == "CR") return normalized.Replace('\n', '\r'); if (lineEnding == "无换行") return normalized.Replace("\n", ""); return normalized; }
-        private static void CopyDirectory(string source, string destination, bool includeEmptyDirectories, HashSet<string> excludePaths = null)
+        private static void CopyDirectory(string source, string destination, HashSet<string> excludePaths = null)
         {
             Directory.CreateDirectory(destination);
-            if (includeEmptyDirectories) foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories)) if (Path.GetFileName(directory) != ".wifitool.metadata") Directory.CreateDirectory(directory.Replace(source, destination));
             foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
             {
                 if (Path.GetFileName(file) == ".wifitool.metadata") continue;
@@ -265,7 +268,15 @@ namespace WiFitool.Services
             }
         }
 
-        private void CopyDirectoryWithMetadata(string source, string destination, bool includeEmptyDirectories, bool includeSymlinks)
+        private static void CopyDirectoryForDownload(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+            foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+                if (!Path.GetFileName(directory).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase)) Directory.CreateDirectory(directory.Replace(source, destination));
+            CopyDirectory(source, destination);
+        }
+
+        private void CopyDirectoryWithMetadata(string source, string destination, bool includeSymlinks)
         {
             var metadata = metadataService.Load(source);
             var symlinkPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -277,7 +288,7 @@ namespace WiFitool.Services
                 var physical = Path.Combine(source, relative);
                 if (File.Exists(physical) || Directory.Exists(physical)) symlinkPaths.Add(physical);
             }
-            CopyDirectory(source, destination, includeEmptyDirectories, symlinkPaths);
+            CopyDirectory(source, destination, symlinkPaths);
             if (!includeSymlinks) return;
             foreach (var item in metadata)
             {

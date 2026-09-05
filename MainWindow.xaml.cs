@@ -64,7 +64,8 @@ namespace WiFitool
         private string fileSearchKeyword;
         private List<WorkspaceEntry> searchResults;
         private readonly DispatcherTimer searchTimer;
-        private bool includeEmptyDirectories;
+        private bool includeRootfs = true;
+        private bool includeUserdata;
         private bool includeSymlinks;
         private int activeTaskCount;
 
@@ -832,8 +833,9 @@ namespace WiFitool
         }
         private void ExportFilesButton_Click(object sender, RoutedEventArgs e)
         {
-            if (adbMode || string.IsNullOrEmpty(currentRoot)) { MessageBox.Show(this, "请先在项目概览中解包并选择分区。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            IncludeEmptyDirectoriesCheckBox.IsChecked = includeEmptyDirectories;
+            if (adbMode || workspace == null || image == null) { MessageBox.Show(this, "请先在项目概览中解包固件分区。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            IncludeRootfsCheckBox.IsChecked = includeRootfs;
+            IncludeUserdataCheckBox.IsChecked = includeUserdata;
             IncludeSymlinksCheckBox.IsChecked = includeSymlinks;
             ExportFilesButton.ContextMenu.PlacementTarget = ExportFilesButton;
             ExportFilesButton.ContextMenu.IsOpen = true;
@@ -841,11 +843,34 @@ namespace WiFitool
 
         private async void ExportFilesMenuExport_Click(object sender, RoutedEventArgs e)
         {
-            if (adbMode || string.IsNullOrEmpty(currentRoot)) { MessageBox.Show(this, "请先在项目概览中解包并选择分区。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            string folder; if (!FolderDialog.TrySelect(this, "选择导出目录", out folder)) return; var target = CreateExportFolder(folder, Path.GetFileNameWithoutExtension(image.Name)); try { await RunTaskProgressAsync(async () => { Directory.CreateDirectory(target); await fileService.ExportAllAsync(currentRoot, target, includeEmptyDirectories, includeSymlinks); }); StatusText.Text = "系统文件导出完成"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+            if (adbMode || workspace == null || image == null) { MessageBox.Show(this, "请先在项目概览中解包固件分区。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            includeRootfs = IncludeRootfsCheckBox.IsChecked == true;
+            includeUserdata = IncludeUserdataCheckBox.IsChecked == true;
+            if (!includeRootfs && !includeUserdata) { MessageBox.Show(this, "请至少选择一个要导出的分区。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            var rootfs = image.Partitions.FirstOrDefault(x => x.Name.Equals("rootfs", StringComparison.OrdinalIgnoreCase));
+            var userdata = image.Partitions.FirstOrDefault(x => x.Name.Equals("userdata", StringComparison.OrdinalIgnoreCase));
+            string rootfsPath = null; string userdataPath = null;
+            if (includeRootfs && (rootfs == null || !workspace.ExtractedDirectories.TryGetValue(rootfs.Name, out rootfsPath))) { MessageBox.Show(this, "rootfs 尚未解包，请先解包 rootfs。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            if (includeUserdata && (userdata == null || !userdata.CanExtract)) { MessageBox.Show(this, "userdata 分区不支持自动解包。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            string folder; if (!FolderDialog.TrySelect(this, "选择导出目录", out folder)) return;
+            var target = CreateExportFolder(folder, Path.GetFileNameWithoutExtension(image.Name));
+            try
+            {
+                await RunTaskProgressAsync(async () =>
+                {
+                    if (includeUserdata && !workspace.ExtractedDirectories.TryGetValue(userdata.Name, out userdataPath))
+                    {
+                        StatusText.Text = "正在自动解包 userdata…";
+                        await fileSystemService.ExtractAsync(userdata, workspace, CancellationToken.None, delegate(string line, bool error) { Dispatcher.Invoke(delegate { StatusText.Text = (error ? "错误：" : "") + line; }); });
+                        userdataPath = workspace.ExtractedDirectories[userdata.Name];
+                    }
+                    Directory.CreateDirectory(target);
+                    await fileService.ExportMergedAsync(rootfsPath, userdataPath, target, includeRootfs, includeUserdata, includeSymlinks);
+                });
+                StatusText.Text = "系统文件导出完成";
+            }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Error); }
         }
-        private void IncludeEmptyDirectoriesCheckBox_Checked(object sender, RoutedEventArgs e) { includeEmptyDirectories = true; }
-        private void IncludeEmptyDirectoriesCheckBox_Unchecked(object sender, RoutedEventArgs e) { includeEmptyDirectories = false; }
         private void IncludeSymlinksCheckBox_Checked(object sender, RoutedEventArgs e) { includeSymlinks = true; }
         private void IncludeSymlinksCheckBox_Unchecked(object sender, RoutedEventArgs e) { includeSymlinks = false; }
         private async void AdbdButton_Click(object sender, RoutedEventArgs e) { if (adbMode || selectedPartition == null || workspace == null) return; try { await RunTaskProgressAsync(() => rootfsFeatureService.ApplyAdbdAsync(selectedPartition, workspace)); StatusText.Text = "adbd 已固化"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "固化 adbd 失败", MessageBoxButton.OK, MessageBoxImage.Error); } }

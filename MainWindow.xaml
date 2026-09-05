@@ -241,12 +241,17 @@
                       </ContextMenu.Resources>
                       <MenuItem StaysOpenOnClick="True" Background="{DynamicResource PanelAltBrush}" Padding="8,7" MinWidth="0">
                         <MenuItem.Header>
-                          <CheckBox x:Name="IncludeEmptyDirectoriesCheckBox" Content="导出空文件夹" IsChecked="False" Style="{StaticResource ExportCheckBoxStyle}" Checked="IncludeEmptyDirectoriesCheckBox_Checked" Unchecked="IncludeEmptyDirectoriesCheckBox_Unchecked" />
+                          <CheckBox x:Name="IncludeRootfsCheckBox" Content="rootfs" IsChecked="True" Style="{StaticResource ExportCheckBoxStyle}" />
                         </MenuItem.Header>
                       </MenuItem>
                       <MenuItem StaysOpenOnClick="True" Background="{DynamicResource PanelAltBrush}" Padding="8,7" MinWidth="0">
                         <MenuItem.Header>
-                          <CheckBox x:Name="IncludeSymlinksCheckBox" Content="导出符号链接" IsChecked="False" Style="{StaticResource ExportCheckBoxStyle}" Checked="IncludeSymlinksCheckBox_Checked" Unchecked="IncludeSymlinksCheckBox_Unchecked" />
+                          <CheckBox x:Name="IncludeUserdataCheckBox" Content="userdata" IsChecked="False" Style="{StaticResource ExportCheckBoxStyle}" />
+                        </MenuItem.Header>
+                      </MenuItem>
+                      <MenuItem StaysOpenOnClick="True" Background="{DynamicResource PanelAltBrush}" Padding="8,7" MinWidth="0">
+                        <MenuItem.Header>
+                          <CheckBox x:Name="IncludeSymlinksCheckBox" Content="符号链接" IsChecked="False" Style="{StaticResource ExportCheckBoxStyle}" Checked="IncludeSymlinksCheckBox_Checked" Unchecked="IncludeSymlinksCheckBox_Unchecked" />
                         </MenuItem.Header>
                       </MenuItem>
                       <MenuItem Header="开始导出文件" Click="ExportFilesMenuExport_Click" Background="{DynamicResource AccentBrush}" Foreground="White" FontWeight="SemiBold" Padding="8,7" MinWidth="0" />
