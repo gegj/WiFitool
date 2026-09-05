@@ -72,6 +72,7 @@ namespace WiFitool
         public MainWindow()
         {
             InitializeComponent();
+            FitInitialWindowToWorkArea();
             Title = "WiFitool v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3);
             fileSystemService = new FileSystemService(toolRunner);
             adbService = new AdbService(toolRunner);
@@ -89,6 +90,20 @@ namespace WiFitool
             CoreProcessGrid.ContextMenu = CreateProcessMenu(true);
             FileGrid.ContextMenu = CreateFileMenu();
             FileGrid.PreviewMouseRightButtonDown += FileGrid_PreviewMouseRightButtonDown;
+        }
+
+        private void FitInitialWindowToWorkArea()
+        {
+            var workArea = SystemParameters.WorkArea;
+            var maxWidth = Math.Max(1, workArea.Width - 16);
+            var maxHeight = Math.Max(1, workArea.Height - 16);
+
+            MaxWidth = maxWidth;
+            MaxHeight = maxHeight;
+            MinWidth = Math.Min(MinWidth, maxWidth);
+            MinHeight = Math.Min(MinHeight, maxHeight);
+            Width = Math.Min(Width, maxWidth);
+            Height = Math.Min(Height, maxHeight);
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
