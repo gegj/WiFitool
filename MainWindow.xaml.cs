@@ -963,7 +963,7 @@ namespace WiFitool
             }
             if (text.IndexOf(":9090/at.html", StringComparison.OrdinalIgnoreCase) >= 0) return;
             var index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase); if (index < 0) return;
-            var insert = "<li><a href=\":9090/at.html\" data-trans=\"AT_WEB\" class=\"c008AFF\"></a></li>";
+            var insert = "<li><a href=\"javascript:window.location.href=window.location.protocol+'//'+window.location.hostname+':9090/at.html'\" data-trans=\"ATWEB\" class=\"c008AFF\"></a></li>";
             await adbService.WriteFileAsync(adbSerial, remote, Encoding.UTF8.GetBytes(text.Substring(0, index + marker.Length) + insert + text.Substring(index + marker.Length)), token);
         }
 
@@ -1743,7 +1743,9 @@ namespace WiFitool
         {
             var version = adbStatus == null ? "" : adbStatus.SoftwareVersion;
             if (string.IsNullOrWhiteSpace(version)) return;
-            try { Clipboard.SetText(version); StatusText.Text = "软件版本已复制"; } catch { StatusText.Text = "复制软件版本失败"; }
+            try { Clipboard.SetText(version); }
+            catch { }
+            StatusText.Text = "复制软件版本成功";
             e.Handled = true;
         }
 
