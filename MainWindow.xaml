@@ -136,12 +136,16 @@
             <Button x:Name="AdbTerminalNav" Click="AdbTerminalNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
               <StackPanel Orientation="Horizontal"><TextBlock Text="›_" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="15" FontFamily="Consolas" /><TextBlock Text="ADB 终端" /></StackPanel>
             </Button>
+            <Button x:Name="ToolboxNav" Click="ToolboxNav_Click" Style="{StaticResource NavButton}" Background="Transparent">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="▣" Width="25" Foreground="{DynamicResource SidebarMutedBrush}" FontSize="16" /><TextBlock Text="工具箱" /></StackPanel>
+            </Button>
           </StackPanel>
         </Grid>
       </Border>
 
       <Border Grid.Column="1" Background="{DynamicResource WindowBrush}">
         <Grid x:Name="WorkspaceContentGrid" Margin="26,20,26,18">
+          <Grid x:Name="ToolboxView" Visibility="Collapsed" Background="Transparent" />
           <!-- 项目概览 -->
           <Grid x:Name="OverviewView">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>

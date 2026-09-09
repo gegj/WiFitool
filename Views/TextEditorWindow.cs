@@ -1,5 +1,7 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,6 +12,8 @@ namespace WiFitool
 {
     internal sealed class TextEditorWindow : Window
     {
+        private const uint ClipboardUnicodeTextFormat = 13;
+        private const uint GlobalMemoryMoveable = 0x0002;
         private readonly TextFileData data;
         private readonly TextBox textBox;
         private readonly ComboBox encodingCombo;
@@ -17,7 +21,9 @@ namespace WiFitool
         private readonly TextBlock positionText;
         private readonly bool readOnly;
         private string findKeyword;
+        private string editorClipboardText;
         private bool findCaseSensitive;
+        private FindWindow findWindow;
         public string EditorText { get { return textBox.Text; } }
         public string SelectedEncodingName { get { return encodingCombo.SelectedItem as string; } }
         public string SelectedLineEnding { get { return lineEndingCombo.SelectedItem as string; } }
@@ -118,6 +124,7 @@ namespace WiFitool
                 Padding = new Thickness(10, 8, 10, 8),
                 IsReadOnly = readOnly
             };
+            textBox.ContextMenu = CreateTextContextMenu();
             Grid.SetRow(textBox, 0);
             panel.Children.Add(textBox);
 
@@ -170,6 +177,7 @@ namespace WiFitool
             border.Child = root;
             Content = border;
             Loaded += delegate { textBox.Focus(); UpdatePosition(); if (lineNumber > 0) SelectLine(lineNumber); };
+            textBox.AddHandler(Keyboard.PreviewKeyDownEvent, new KeyEventHandler(TextBox_PreviewKeyDown), true);
             KeyDown += TextEditorWindow_KeyDown;
         }
 
@@ -223,12 +231,182 @@ namespace WiFitool
         private void TextEditorWindow_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { BeginFind(); e.Handled = true; }
-            else if (e.Key == Key.F3) { FindNext(); e.Handled = true; }
         }
+
+        private async void TextBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (Keyboard.Modifiers != ModifierKeys.Control) return;
+            if (e.Key != Key.X && e.Key != Key.C && e.Key != Key.V) return;
+            e.Handled = true;
+            if (e.Key == Key.X) await CutSelectedTextAsync();
+            else if (e.Key == Key.C) await CopySelectedTextAsync();
+            else await PasteClipboardTextAsync();
+        }
+
+        private ContextMenu CreateTextContextMenu()
+        {
+            var menu = new ContextMenu();
+            var cut = new MenuItem { Header = "剪切" };
+            var copy = new MenuItem { Header = "复制" };
+            var paste = new MenuItem { Header = "粘贴" };
+            var selectAll = new MenuItem { Header = "全选" };
+            cut.Click += async delegate { await CutSelectedTextAsync(); };
+            copy.Click += async delegate { await CopySelectedTextAsync(); };
+            paste.Click += async delegate { await PasteClipboardTextAsync(); };
+            selectAll.Click += delegate { textBox.SelectAll(); };
+            menu.Items.Add(cut);
+            menu.Items.Add(copy);
+            menu.Items.Add(paste);
+            menu.Items.Add(new Separator());
+            menu.Items.Add(selectAll);
+            menu.Opened += delegate
+            {
+                var hasSelection = textBox.SelectionLength > 0;
+                cut.IsEnabled = !readOnly && hasSelection;
+                copy.IsEnabled = hasSelection;
+                paste.IsEnabled = !readOnly;
+                selectAll.IsEnabled = textBox.Text.Length > 0;
+            };
+            return menu;
+        }
+
+        private async Task CutSelectedTextAsync()
+        {
+            if (readOnly || textBox.SelectionLength <= 0) return;
+            var start = textBox.SelectionStart;
+            var length = textBox.SelectionLength;
+            var selectedText = textBox.SelectedText;
+            editorClipboardText = selectedText;
+            textBox.Text = textBox.Text.Remove(start, length);
+            textBox.Select(start, 0);
+            textBox.Focus();
+            await SetClipboardTextAsync(selectedText);
+        }
+
+        private async Task CopySelectedTextAsync()
+        {
+            if (textBox.SelectionLength <= 0) return;
+            var selectedText = textBox.SelectedText;
+            editorClipboardText = selectedText;
+            await SetClipboardTextAsync(selectedText);
+        }
+
+        private async Task PasteClipboardTextAsync()
+        {
+            if (readOnly) return;
+            var clipboardText = await GetClipboardTextAsync();
+            if (clipboardText == null) clipboardText = editorClipboardText;
+            if (clipboardText == null || clipboardText.Length == 0) return;
+            var start = textBox.SelectionStart;
+            var length = textBox.SelectionLength;
+            textBox.Text = textBox.Text.Remove(start, length).Insert(start, clipboardText);
+            textBox.Select(start + clipboardText.Length, 0);
+            textBox.Focus();
+        }
+
+        private static Task SetClipboardTextAsync(string value)
+        {
+            return Task.Run(() => SetClipboardTextNative(value));
+        }
+
+        private static Task<string> GetClipboardTextAsync()
+        {
+            return Task.Run(GetClipboardTextNative);
+        }
+
+        private static bool SetClipboardTextNative(string value)
+        {
+            var bytes = Encoding.Unicode.GetBytes((value ?? "") + "\0");
+            var memory = GlobalAlloc(GlobalMemoryMoveable, (UIntPtr)bytes.Length);
+            if (memory == IntPtr.Zero) return false;
+            var locked = false;
+            try
+            {
+                var target = GlobalLock(memory);
+                if (target == IntPtr.Zero) return false;
+                locked = true;
+                Marshal.Copy(bytes, 0, target, bytes.Length);
+                GlobalUnlock(memory);
+                locked = false;
+                if (!OpenClipboard(IntPtr.Zero)) return false;
+                try
+                {
+                    if (!EmptyClipboard() || SetClipboardData(ClipboardUnicodeTextFormat, memory) == IntPtr.Zero) return false;
+                    memory = IntPtr.Zero;
+                    return true;
+                }
+                finally { CloseClipboard(); }
+            }
+            finally
+            {
+                if (locked) GlobalUnlock(memory);
+                if (memory != IntPtr.Zero) GlobalFree(memory);
+            }
+        }
+
+        private static string GetClipboardTextNative()
+        {
+            if (!OpenClipboard(IntPtr.Zero)) return null;
+            try
+            {
+                if (!IsClipboardFormatAvailable(ClipboardUnicodeTextFormat)) return "";
+                var memory = GetClipboardData(ClipboardUnicodeTextFormat);
+                if (memory == IntPtr.Zero) return null;
+                var target = GlobalLock(memory);
+                if (target == IntPtr.Zero) return null;
+                try { return Marshal.PtrToStringUni(target) ?? ""; }
+                finally { GlobalUnlock(memory); }
+            }
+            finally { CloseClipboard(); }
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EmptyClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetClipboardData(uint format, IntPtr memory);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool IsClipboardFormatAvailable(uint format);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr GetClipboardData(uint format);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalFree(IntPtr memory);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalLock(IntPtr memory);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GlobalUnlock(IntPtr memory);
 
         private void BeginFind()
         {
-            var dialog = new FindWindow(); dialog.Owner = this; if (dialog.ShowDialog() != true) return; findKeyword = dialog.Keyword; findCaseSensitive = dialog.CaseSensitive; FindNext();
+            if (findWindow != null)
+            {
+                findWindow.Activate();
+                findWindow.FocusInput();
+                return;
+            }
+            findWindow = new FindWindow(findKeyword, findCaseSensitive, delegate(string keyword, bool caseSensitive)
+            {
+                findKeyword = keyword;
+                findCaseSensitive = caseSensitive;
+                FindNext();
+            });
+            findWindow.Owner = this;
+            findWindow.Closed += delegate { findWindow = null; };
+            findWindow.Show();
         }
 
         private void FindNext()
@@ -246,10 +424,11 @@ namespace WiFitool
 
     internal sealed class FindWindow : Window
     {
-        public string Keyword { get; private set; } public bool CaseSensitive { get { return check.IsChecked == true; } }
         private readonly TextBox input; private readonly CheckBox check;
-        public FindWindow()
+        private readonly Action<string, bool> findAction;
+        public FindWindow(string keyword, bool caseSensitive, Action<string, bool> findAction)
         {
+            this.findAction = findAction;
             Title = "查找";
             Width = 430;
             MinWidth = 430;
@@ -322,6 +501,7 @@ namespace WiFitool
             });
             input = new TextBox
             {
+                Text = keyword ?? "",
                 Height = 38,
                 Margin = new Thickness(0, 8, 0, 0),
                 Padding = new Thickness(10, 6, 10, 6),
@@ -335,6 +515,7 @@ namespace WiFitool
             check = new CheckBox
             {
                 Content = "区分大小写",
+                IsChecked = caseSensitive,
                 Margin = new Thickness(0, 12, 0, 0),
                 FontSize = 13,
                 Foreground = GetBrush("TextBrush", Color.FromRgb(240, 245, 252))
@@ -369,8 +550,7 @@ namespace WiFitool
             };
             find.Click += delegate
             {
-                Keyword = input.Text;
-                if (!string.IsNullOrEmpty(Keyword)) DialogResult = true;
+                if (!string.IsNullOrEmpty(input.Text) && findAction != null) findAction(input.Text, check.IsChecked == true);
             };
             buttons.Children.Add(cancel);
             buttons.Children.Add(find);
@@ -388,6 +568,12 @@ namespace WiFitool
             Content = border;
             border.Child = root;
             Loaded += delegate { input.Focus(); };
+        }
+
+        public void FocusInput()
+        {
+            input.Focus();
+            input.SelectAll();
         }
 
         private static Brush GetBrush(string key, Color fallback)

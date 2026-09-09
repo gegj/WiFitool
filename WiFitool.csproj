@@ -13,9 +13,9 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <StartupObject>WiFitool.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.39.4</Version>
-    <FileVersion>0.39.4.0</FileVersion>
-    <AssemblyVersion>0.39.4.0</AssemblyVersion>
+    <Version>0.42.7</Version>
+    <FileVersion>0.42.7.0</FileVersion>
+    <AssemblyVersion>0.42.7.0</AssemblyVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GeneratedAssemblyInfoFile>$(IntermediateOutputPath)GeneratedAssemblyInfo.cs</GeneratedAssemblyInfoFile>
   </PropertyGroup>
@@ -42,6 +42,7 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Management" />
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Xml" />

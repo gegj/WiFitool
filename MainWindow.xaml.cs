@@ -72,6 +72,7 @@ namespace WiFitool
         public MainWindow()
         {
             InitializeComponent();
+            InitializeToolbox();
             FitInitialWindowToWorkArea();
             Title = "WiFitool v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3);
             fileSystemService = new FileSystemService(toolRunner);
@@ -315,6 +316,14 @@ namespace WiFitool
         private async void Window_PreviewDrop(object sender, DragEventArgs e)
         {
             FirmwareDropOverlay.Visibility = Visibility.Collapsed;
+            if (ToolboxView.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                var executable = GetToolboxExecutable(e);
+                if (executable != null) AddToolboxExecutable(executable);
+                else StatusText.Text = "仅支持 EXE 文件";
+                return;
+            }
             string fileName;
             if (TryGetDroppedFirmware(e, out fileName))
             {
@@ -330,6 +339,13 @@ namespace WiFitool
 
         private void UpdateFirmwareDropState(DragEventArgs e)
         {
+            if (ToolboxView.Visibility == Visibility.Visible)
+            {
+                FirmwareDropOverlay.Visibility = Visibility.Collapsed;
+                e.Effects = GetToolboxExecutable(e) == null ? DragDropEffects.None : DragDropEffects.Link;
+                e.Handled = true;
+                return;
+            }
             string fileName;
             var isFirmware = TryGetDroppedFirmware(e, out fileName);
             var isFileDrop = !isFirmware && IsFileGridDropTarget(e.OriginalSource) && e.Data.GetDataPresent(DataFormats.FileDrop);
@@ -713,6 +729,8 @@ namespace WiFitool
             DomainScanView.Visibility = visible == DomainScanView ? Visibility.Visible : Visibility.Collapsed;
             ProcessView.Visibility = visible == ProcessView ? Visibility.Visible : Visibility.Collapsed;
             AdbTerminalView.Visibility = visible == AdbTerminalView ? Visibility.Visible : Visibility.Collapsed;
+            ToolboxView.Visibility = visible == ToolboxView ? Visibility.Visible : Visibility.Collapsed;
+            ToolboxNav.Background = visible == ToolboxView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             OverviewNav.Background = visible == OverviewView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             FilesNav.Background = visible == FilesView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
             DomainScanNav.Background = visible == DomainScanView ? (Brush)FindResource("SidebarSelectedBrush") : Brushes.Transparent;
@@ -1193,7 +1211,10 @@ namespace WiFitool
                     }
                     else
                     {
-                        await RunTaskProgressAsync(() => Task.Run(() => fileService.SetPermissions(currentRoot, entry.Path, dialog.Mode, dialog.OwnerValue, dialog.Recursive)));
+                        var mode = dialog.Mode;
+                        var owner = dialog.OwnerValue;
+                        var recursive = dialog.Recursive;
+                        await RunTaskProgressAsync(() => Task.Run(() => fileService.SetPermissions(currentRoot, entry.Path, mode, owner, recursive)));
                         var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName);
                         if (p != null) p.Modified = true;
                         LoadFiles();
