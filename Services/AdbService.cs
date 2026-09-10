@@ -80,6 +80,113 @@ namespace WiFitool.Services
             if (result.ExitCode != 0) throw new InvalidOperationException("设备重启命令失败：" + result.StandardError);
         }
 
+        public async Task<string> FindOnlineSerialAsync(CancellationToken token)
+        {
+            if (!File.Exists(adbPath)) throw new FileNotFoundException("缺少 ADB 工具，请先等待工具环境准备完成。", adbPath);
+            var result = await runner.RunAsync(adbPath, new[] { "devices", "-l" }, adbDirectory, token, null);
+            if (result.ExitCode != 0) throw new InvalidOperationException("ADB 设备检测失败：" + result.StandardError);
+            var device = ParseDevices(result.StandardOutput).FirstOrDefault(x => x.State == "device");
+            return device == null ? "" : device.Serial;
+        }
+
+        public string NormalizeDevicePath(string path)
+        {
+            return NormalizeRemotePath(path);
+        }
+
+        public async Task ReplaceRemoteFileQuickAsync(string serial, string virtualPath, string localPath, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            if (!File.Exists(localPath)) throw new FileNotFoundException("找不到要覆盖的本地文件。", localPath);
+            var target = NormalizeRemotePath(virtualPath);
+            var size = new FileInfo(localPath).Length;
+            var temporary = "/data/local/tmp/.wifitool-replace-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                await EnsureDevicePathWritableAsync(serial, target, token);
+                var push = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", localPath, temporary }, adbDirectory, token, null);
+                if (push.ExitCode != 0) throw new InvalidOperationException("上传覆盖文件失败：" + push.StandardError);
+                var command = "test -f " + QuoteShellArgument(target)
+                    + " && test $(wc -c < " + QuoteShellArgument(temporary) + ") -eq " + size
+                    + " && cat " + QuoteShellArgument(temporary) + " > " + QuoteShellArgument(target)
+                    + " && test $(wc -c < " + QuoteShellArgument(target) + ") -eq " + size
+                    + " && sync && rm -f " + QuoteShellArgument(temporary);
+                var replace = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null);
+                if (replace.ExitCode != 0) throw new InvalidOperationException("覆盖设备文件失败：" + replace.StandardError);
+            }
+            finally
+            {
+                try
+                {
+                    var cleanup = runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "rm -f " + QuoteShellArgument(temporary) }, adbDirectory, CancellationToken.None, null);
+                    if (await Task.WhenAny(cleanup, Task.Delay(1500)) == cleanup) await cleanup;
+                }
+                catch { }
+            }
+        }
+
+        public async Task DeleteRemoteFileQuickAsync(string serial, string virtualPath, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var target = NormalizeRemotePath(virtualPath);
+            var command = "if [ ! -e " + QuoteShellArgument(target) + " ]; then exit 0; fi; test -f "
+                + QuoteShellArgument(target) + " && test ! -L " + QuoteShellArgument(target)
+                + " && rm -f " + QuoteShellArgument(target)
+                + " && sync && test ! -e " + QuoteShellArgument(target);
+            await EnsureDevicePathWritableAsync(serial, target, token);
+            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null);
+            if (result.ExitCode != 0) throw new InvalidOperationException("删除设备文件失败：" + result.StandardError);
+        }
+
+        public async Task EnsureDevicePathWritableAsync(string serial, string virtualPath, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var target = NormalizeRemotePath(virtualPath);
+            await RemountRootAsync(serial, token);
+            var mounts = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cat", "/proc/mounts" }, adbDirectory, token, null);
+            if (mounts.ExitCode != 0) throw new InvalidOperationException("无法读取设备分区挂载状态：" + mounts.StandardError);
+            var mode = FindMountMode(mounts.StandardOutput, target);
+            if (!string.Equals(mode, "rw", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("设备系统分区不可写，当前为只读状态。");
+        }
+
+        private static string FindMountMode(string mountsText, string target)
+        {
+            var normalizedTarget = target == "/" ? "/" : target.TrimEnd('/');
+            var bestMountPoint = "";
+            var bestMode = "";
+            foreach (var rawLine in (mountsText ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = Regex.Split(rawLine.Trim(), @"\s+");
+                if (parts.Length < 4) continue;
+                var mountPoint = DecodeMountField(parts[1]);
+                if (string.IsNullOrWhiteSpace(mountPoint)) continue;
+                mountPoint = mountPoint == "/" ? "/" : ("/" + mountPoint.Trim('/'));
+                if (normalizedTarget != mountPoint && (mountPoint != "/" && !normalizedTarget.StartsWith(mountPoint + "/", StringComparison.Ordinal))) continue;
+                var mode = "";
+                foreach (var option in parts[3].Split(','))
+                {
+                    if (string.Equals(option, "rw", StringComparison.OrdinalIgnoreCase)) mode = "rw";
+                    else if (string.Equals(option, "ro", StringComparison.OrdinalIgnoreCase)) mode = "ro";
+                }
+                if (mountPoint.Length > bestMountPoint.Length || (mountPoint.Length == bestMountPoint.Length && mode.Length > 0))
+                {
+                    bestMountPoint = mountPoint;
+                    bestMode = mode;
+                }
+            }
+            return bestMode;
+        }
+
+        private static string DecodeMountField(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return value;
+            return Regex.Replace(value, @"\\([0-7]{3})", delegate(Match match)
+            {
+                try { return ((char)Convert.ToInt32(match.Groups[1].Value, 8)).ToString(); }
+                catch { return match.Value; }
+            });
+        }
+
         public async Task<ToolResult> ExecuteShellCommandAsync(string serial, string workingDirectory, string command, CancellationToken token)
         {
             ValidateSerial(serial);
