@@ -65,7 +65,9 @@ namespace WiFitool.Services
             var version = await ReadSoftwareVersionAsync(target, token);
             var spaces = await ReadSpacesAsync(target, token);
             var rootFsMode = await ReadRootFsModeAsync(target, token);
-            return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, RootFsMode = rootFsMode, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = spaces.FirstOrDefault(x => x.Mount == "/mnt/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/data") };
+            var userdata = spaces.FirstOrDefault(x => x.Mount == "/mnt/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/data");
+            var userdataFsMode = userdata == null ? "" : await ReadMountModeAsync(target, userdata.Mount, token);
+            return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, RootFsMode = rootFsMode, UserdataFsMode = userdataFsMode, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = userdata };
         }
 
         public async Task RestartAdbServerAsync(CancellationToken token)
@@ -103,7 +105,8 @@ namespace WiFitool.Services
             var temporary = "/data/local/tmp/.wifitool-replace-" + Guid.NewGuid().ToString("N");
             try
             {
-                await EnsureDevicePathWritableAsync(serial, target, token);
+                var mode = await ReadMountModeAsync(serial, target, token);
+                if (string.Equals(mode, "ro", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("目标路径所在分区为只读：" + target);
                 var push = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", localPath, temporary }, adbDirectory, token, null);
                 if (push.ExitCode != 0) throw new InvalidOperationException("上传覆盖文件失败：" + push.StandardError);
                 var command = "test -f " + QuoteShellArgument(target)
@@ -133,7 +136,8 @@ namespace WiFitool.Services
                 + QuoteShellArgument(target) + " && test ! -L " + QuoteShellArgument(target)
                 + " && rm -f " + QuoteShellArgument(target)
                 + " && sync && test ! -e " + QuoteShellArgument(target);
-            await EnsureDevicePathWritableAsync(serial, target, token);
+            var mode = await ReadMountModeAsync(serial, target, token);
+            if (string.Equals(mode, "ro", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("目标路径所在分区为只读：" + target);
             var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null);
             if (result.ExitCode != 0) throw new InvalidOperationException("删除设备文件失败：" + result.StandardError);
         }
@@ -142,11 +146,74 @@ namespace WiFitool.Services
         {
             ValidateSerial(serial);
             var target = NormalizeRemotePath(virtualPath);
-            await RemountRootAsync(serial, token);
+            target = await ResolveRemoteTargetAsync(serial, target, token);
+            var mountsText = await ReadMountsTextAsync(serial, token);
+            var mode = FindMountMode(mountsText, target);
+            if (string.Equals(mode, "rw", StringComparison.OrdinalIgnoreCase)) return;
+
+            // 未匹配到挂载点时按根分区处理，避免 /mnt/userdata 未单独挂载时误判。
+            if (mode == "")
+            {
+                await RemountRootAsync(serial, token);
+                mountsText = await ReadMountsTextAsync(serial, token);
+                mode = FindMountMode(mountsText, target);
+            }
+
+            if (!string.Equals(mode, "rw", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("目标路径所在分区为只读：" + target);
+        }
+
+        public async Task<string> ReadMountModeAsync(string serial, string path, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var target = await ResolveRemoteTargetAsync(serial, NormalizeRemotePath(path), token);
+            return FindMountMode(await ReadMountsTextAsync(serial, token), target);
+        }
+
+        public async Task<string> ResolveRemoteTargetAsync(string serial, string path, CancellationToken token)
+        {
+            ValidateSerial(serial);
+            var target = NormalizeRemotePath(path);
+            for (var depth = 0; depth < 8; depth++)
+            {
+                var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "ls -ldn " + QuoteShellArgument(target) }, adbDirectory, token, null);
+                if (result.ExitCode != 0) return target;
+                var line = result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("l", StringComparison.Ordinal)) return target;
+                var arrowIndex = line.LastIndexOf(" -> ", StringComparison.Ordinal);
+                if (arrowIndex < 0) return target;
+                var linkTarget = line.Substring(arrowIndex + 4).Trim();
+                if (string.IsNullOrWhiteSpace(linkTarget)) return target;
+                if (linkTarget.StartsWith("/", StringComparison.Ordinal)) target = NormalizeRemoteLinkPath(linkTarget);
+                else target = NormalizeRemoteLinkPath(CombineRemotePath(ParentRemotePath(target), linkTarget));
+            }
+            return target;
+        }
+
+        private static string NormalizeRemoteLinkPath(string path)
+        {
+            var value = "/" + (path ?? "").Replace('\\', '/').Trim('/');
+            if (value == "/") return "/";
+            var segments = new List<string>();
+            foreach (var segment in value.Split('/'))
+            {
+                if (segment.Length == 0 || segment == ".") continue;
+                if (segment == "..")
+                {
+                    if (segments.Count == 0) throw new InvalidOperationException("符号链接目标越出设备根目录。");
+                    segments.RemoveAt(segments.Count - 1);
+                    continue;
+                }
+                segments.Add(segment);
+            }
+            return segments.Count == 0 ? "/" : "/" + string.Join("/", segments);
+        }
+
+        private async Task<string> ReadMountsTextAsync(string serial, CancellationToken token)
+        {
             var mounts = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "cat", "/proc/mounts" }, adbDirectory, token, null);
             if (mounts.ExitCode != 0) throw new InvalidOperationException("无法读取设备分区挂载状态：" + mounts.StandardError);
-            var mode = FindMountMode(mounts.StandardOutput, target);
-            if (!string.Equals(mode, "rw", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("设备系统分区不可写，当前为只读状态。");
+            return mounts.StandardOutput;
         }
 
         private static string FindMountMode(string mountsText, string target)
@@ -508,7 +575,7 @@ namespace WiFitool.Services
 
         public async Task CreateFileAsync(string serial, string virtualPath, byte[] bytes, CancellationToken token)
         {
-            ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var tempDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Temp"); Directory.CreateDirectory(tempDirectory); var local = Path.Combine(tempDirectory, "adb-hosts-" + Guid.NewGuid().ToString("N")); try { File.WriteAllBytes(local, bytes); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", local, path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备文件失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod", "0775", path }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置 hosts 权限失败：" + chmod.StandardError); } finally { try { if (File.Exists(local)) File.Delete(local); } catch { } }
+            ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var tempDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Temp"); Directory.CreateDirectory(tempDirectory); var local = Path.Combine(tempDirectory, "adb-hosts-" + Guid.NewGuid().ToString("N")); try { await EnsureDevicePathWritableAsync(serial, path, token); File.WriteAllBytes(local, bytes); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", local, path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备文件失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod", "0775", path }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置 hosts 权限失败：" + chmod.StandardError); } finally { try { if (File.Exists(local)) File.Delete(local); } catch { } }
         }
 
         public async Task UploadNewFileAsync(string serial, string virtualDirectory, string localPath, CancellationToken token)
@@ -522,13 +589,12 @@ namespace WiFitool.Services
             ValidateSerial(serial);
             if (!File.Exists(localPath)) throw new FileNotFoundException("找不到要上传的本地文件。", localPath);
             var remote = NormalizeRemotePath(virtualPath);
+            await EnsureDevicePathWritableAsync(serial, remote, token);
             var target = remote;
             var attributes = await ReadRemoteAttributesAsync(serial, target, token);
             if (attributes.Type == 'l')
             {
-                var resolved = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "readlink -f " + QuoteShellArgument(remote) }, adbDirectory, token, null);
-                if (resolved.ExitCode != 0 || string.IsNullOrWhiteSpace(resolved.StandardOutput)) throw new InvalidOperationException("无法解析符号链接目标：" + resolved.StandardError);
-                target = resolved.StandardOutput.Trim();
+                target = await ResolveRemoteTargetAsync(serial, remote, token);
                 attributes = await ReadRemoteAttributesAsync(serial, target, token);
             }
             if (attributes.Type == 'c' || attributes.Type == 'b' || attributes.Type == 'p' || attributes.Type == 's') throw new InvalidOperationException("目标路径是设备节点或特殊文件，不能上传覆盖。");
@@ -578,17 +644,17 @@ namespace WiFitool.Services
 
         public async Task CreateDirectoryAsync(string serial, string virtualDirectory, string name, CancellationToken token)
         {
-            ValidateSerial(serial); if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(new[] { '/', '\\', '\r', '\n' }) >= 0) throw new InvalidOperationException("目录名称包含不允许的字符。"); var path = CombineRemotePath(NormalizeRemotePath(virtualDirectory), name); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mkdir -p " + QuoteShellArgument(path) }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备目录失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod 755 " + QuoteShellArgument(path) }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置目录权限失败：" + chmod.StandardError);
+            ValidateSerial(serial); if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(new[] { '/', '\\', '\r', '\n' }) >= 0) throw new InvalidOperationException("目录名称包含不允许的字符。"); var path = CombineRemotePath(NormalizeRemotePath(virtualDirectory), name); await EnsureDevicePathWritableAsync(serial, virtualDirectory, token); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mkdir -p " + QuoteShellArgument(path) }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备目录失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod 755 " + QuoteShellArgument(path) }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置目录权限失败：" + chmod.StandardError);
         }
 
         public async Task SetModeAsync(string serial, string virtualPath, int mode, bool recursive, CancellationToken token)
         {
-            ValidateSerial(serial); if (mode < 0 || mode > 511) throw new InvalidOperationException("Unix 权限无效。"); var command = "chmod " + (recursive ? "-R " : "") + Convert.ToString(mode, 8) + " " + QuoteShellArgument(NormalizeRemotePath(virtualPath)); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备权限失败：" + result.StandardError);
+            ValidateSerial(serial); if (mode < 0 || mode > 511) throw new InvalidOperationException("Unix 权限无效。"); await EnsureDevicePathWritableAsync(serial, virtualPath, token); var command = "chmod " + (recursive ? "-R " : "") + Convert.ToString(mode, 8) + " " + QuoteShellArgument(NormalizeRemotePath(virtualPath)); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备权限失败：" + result.StandardError);
         }
 
         public async Task SetOwnerAsync(string serial, string virtualPath, string owner, bool recursive, CancellationToken token)
         {
-            ValidateSerial(serial); if (string.IsNullOrWhiteSpace(owner) || owner.IndexOfAny(new[] { ' ', '\t', '\r', '\n' }) >= 0) throw new InvalidOperationException("所有者格式无效。"); var command = "chown " + (recursive ? "-R " : "") + QuoteShellArgument(owner) + " " + QuoteShellArgument(NormalizeRemotePath(virtualPath)); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备所有者失败：" + result.StandardError);
+            ValidateSerial(serial); if (string.IsNullOrWhiteSpace(owner) || owner.IndexOfAny(new[] { ' ', '\t', '\r', '\n' }) >= 0) throw new InvalidOperationException("所有者格式无效。"); await EnsureDevicePathWritableAsync(serial, virtualPath, token); var command = "chown " + (recursive ? "-R " : "") + QuoteShellArgument(owner) + " " + QuoteShellArgument(NormalizeRemotePath(virtualPath)); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", command }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("设置设备所有者失败：" + result.StandardError);
         }
 
         private async Task<RemoteFileAttributes> ReadRemoteAttributesAsync(string serial, string virtualPath, CancellationToken token)
@@ -608,13 +674,14 @@ namespace WiFitool.Services
 
         public async Task DeleteRemoteAsync(string serial, string virtualPath, bool directory, CancellationToken token)
         {
-            ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "rm", directory ? "-rf" : "-f", path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("删除设备文件失败：" + result.StandardError);
+            ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); await EnsureDevicePathWritableAsync(serial, path, token); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "rm", directory ? "-rf" : "-f", path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("删除设备文件失败：" + result.StandardError);
         }
 
         public async Task RenameAsync(string serial, string virtualPath, string newName, CancellationToken token)
         {
             ValidateSerial(serial); if (string.IsNullOrWhiteSpace(newName) || newName.IndexOfAny(new[] { '/', '\\', '\r', '\n' }) >= 0 || newName == "." || newName == "..") throw new InvalidOperationException("名称无效。");
             var oldPath = NormalizeRemotePath(virtualPath); var newPath = CombineRemotePath(ParentRemotePath(oldPath), newName);
+            await EnsureDevicePathWritableAsync(serial, oldPath, token);
             var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mv " + QuoteShellArgument(oldPath) + " " + QuoteShellArgument(newPath) }, adbDirectory, token, null);
             if (result.ExitCode != 0) throw new InvalidOperationException("重命名失败：" + result.StandardError);
         }
