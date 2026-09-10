@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -28,7 +27,8 @@ namespace WiFitool.Services
 
         public void Start()
         {
-            listener = new UdpClient(new IPEndPoint(address, 69));
+            // 与 tftpd32 一致监听所有本机地址，避免设备请求到网卡地址时被绑定范围限制。
+            listener = new UdpClient(new IPEndPoint(IPAddress.Any, 69));
             listening = ListenAsync();
         }
 
@@ -40,7 +40,10 @@ namespace WiFitool.Services
                 try { request = await listener.ReceiveAsync(); }
                 catch (ObjectDisposedException) { break; }
                 catch (SocketException) { if (cancellation.IsCancellationRequested) break; continue; }
-                if (IsAdbdReadRequest(request.Buffer)) _ = Task.Run(() => TransferAsync(request.RemoteEndPoint));
+                if (IsAdbdReadRequest(request.Buffer))
+                {
+                    _ = Task.Run(() => TransferAsync(request.RemoteEndPoint));
+                }
             }
         }
 
@@ -48,7 +51,8 @@ namespace WiFitool.Services
         {
             if (request == null || request.Length < 7 || request[0] != 0 || request[1] != 1) return false;
             var end = Array.IndexOf(request, (byte)0, 2);
-            return end > 2 && string.Equals(Encoding.ASCII.GetString(request, 2, end - 2), "adbd", StringComparison.OrdinalIgnoreCase);
+            // BusyBox 版本可能携带路径或大小写差异；工具只有一个文件，任意 RRQ 都提供 adbd。
+            return end > 2;
         }
 
         private async Task TransferAsync(IPEndPoint remote)
@@ -58,11 +62,13 @@ namespace WiFitool.Services
                 using (var transfer = new UdpClient(new IPEndPoint(address, 0)))
                 {
                     transfer.Connect(remote);
+                    // 设备端 BusyBox tftp 与原工具包服务端一样不使用 OACK 选项协商。
+                    const int blockSize = 512;
                     var block = 1;
                     var offset = 0;
                     while (!cancellation.IsCancellationRequested)
                     {
-                        var size = Math.Min(512, file.Length - offset);
+                        var size = Math.Min(blockSize, file.Length - offset);
                         var packet = new byte[size + 4];
                         packet[1] = 3;
                         packet[2] = (byte)(block >> 8);
@@ -79,7 +85,7 @@ namespace WiFitool.Services
                         }
                         if (!acknowledged) return;
                         offset += size;
-                        if (size < 512) { downloaded.TrySetResult(true); return; }
+                        if (size < blockSize) { downloaded.TrySetResult(true); return; }
                         block = (block + 1) & 0xffff;
                     }
                 }

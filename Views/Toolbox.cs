@@ -493,18 +493,31 @@ namespace WiFitool
                         try { server.Start(); }
                         catch (System.Net.Sockets.SocketException ex) { throw new InvalidOperationException("UDP 69 端口被占用或无法监听：" + ex.Message); }
                         StatusText.Text = "正在等待设备下载 adbd…";
-                        var command = "sh -c 'if touch /bin/.adbd_test 2>/dev/null; then rm -f /bin/.adbd_test; tftp -l /bin/adbd -r adbd -g " + options.LocalIp + "; chmod 777 /bin/adbd; grep -q adbd /etc/rc 2>/dev/null || echo /bin/adbd\\ \\& >> /etc/rc; else tftp -l /mnt/userdata/etc_rw/nv/adbd -r adbd -g " + options.LocalIp + "; chmod 777 /mnt/userdata/etc_rw/nv/adbd; fi'";
-                        at.Send("AT+SHELL=" + command, 900);
+                        // 设备已验证的流程：默认工作目录为可写 nv 目录，使用原始 tftp 语法。
+                        var download = at.Send("AT+SHELL=rm -f /mnt/userdata/etc_rw/nv/adbd", 700);
+                        download = at.Send("AT+SHELL=tftp -r adbd -g " + options.LocalIp, 1200);
                         var completed = await Task.WhenAny(server.Downloaded, Task.Delay(20000, token));
                         token.ThrowIfCancellationRequested();
-                        if (completed != server.Downloaded) throw new InvalidOperationException("设备未请求 adbd 文件，请确认本机 IP 与设备处于同一网段。");
+                        if (completed != server.Downloaded)
+                            throw new InvalidOperationException("设备未请求 adbd 文件，请确认本机 IP、UDP 69 端口和 TFTP 服务。设备返回：" + download.Trim());
                     }
                     StatusText.Text = "正在启动 adbd…";
-                    at.Send("AT+SHELL=if [ -x /bin/adbd ]; then /bin/adbd &; else /mnt/userdata/etc_rw/nv/adbd &; fi", 1000);
+                    var targetAdbd = "/mnt/userdata/etc_rw/nv/adbd";
+                    var verify = at.Send("AT+SHELL=test -s " + targetAdbd + " && ls -l " + targetAdbd, 900);
+                    if (verify.IndexOf("OK", StringComparison.OrdinalIgnoreCase) < 0 && verify.IndexOf(targetAdbd, StringComparison.OrdinalIgnoreCase) < 0)
+                        throw new InvalidOperationException("设备未成功下载 " + targetAdbd + "，请确认 TFTP 服务和本机 IP。设备返回：" + verify.Trim());
+                    at.Send("AT+SHELL=chmod 777 " + targetAdbd, 900);
+                    at.Send("AT+SHELL=sync", 700);
+                    at.Send("AT+SHELL=killall adbd 2>/dev/null", 700);
+                    at.Send("AT+SHELL=" + targetAdbd, 1200);
+                    // 只开启 USB gadget 的 ADB 功能，避免先写 0 导致接口被移除。
+                    at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/adb_enable", 700);
                 }
             }
             StatusText.Text = "正在等待 ADB 设备上线…";
-            for (var attempt = 0; attempt < 12; attempt++)
+            // adbd 启动后 USB gadget 可能需要重新枚举；重启本工具自己的 adb server，避免复用旧 transport。
+            try { await adbService.RestartAdbServerAsync(token); } catch { }
+            for (var attempt = 0; attempt < 30; attempt++)
             {
                 token.ThrowIfCancellationRequested();
                 var status = await adbService.CheckStatusAsync(token);
@@ -516,7 +529,7 @@ namespace WiFitool
                 }
                 await Task.Delay(1000, token);
             }
-            throw new InvalidOperationException("adbd 已启动，但 ADB 未上线。该设备可能不兼容内置 adbd。" );
+            throw new InvalidOperationException("adbd 已启动，但设备仍未进入 ADB online 状态。请检查 USB 是否重新枚举，或确认设备端 adb_enable 已开启。" );
         }
 
         private static string GetPreferredLocalIp()

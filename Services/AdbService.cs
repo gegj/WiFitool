@@ -67,6 +67,12 @@ namespace WiFitool.Services
             var rootFsMode = await ReadRootFsModeAsync(target, token);
             return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, RootFsMode = rootFsMode, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = spaces.FirstOrDefault(x => x.Mount == "/mnt/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/userdata") ?? spaces.FirstOrDefault(x => x.Mount == "/data") };
         }
+
+        public async Task RestartAdbServerAsync(CancellationToken token)
+        {
+            await runner.RunAsync(adbPath, new[] { "kill-server" }, adbDirectory, token, null);
+            await runner.RunAsync(adbPath, new[] { "start-server" }, adbDirectory, token, null);
+        }
         public async Task RebootAsync(string serial, CancellationToken token)
         {
             ValidateSerial(serial);
