@@ -275,11 +275,7 @@ namespace WiFitool
                 MessageBox.Show(this, message, "ADB离线修复", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-            var options = ShowAdbRepairDialog();
-            if (options == null) return;
-            await CheckAdbStatusAsync();
-            if (adbStatus == null || adbStatus.DeviceState != "offline") { MessageBox.Show(this, "设备状态已变化，当前不是离线状态，已取消修复。", "ADB离线修复", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            await RunBusyAsync("正在修复离线 ADB…", token => RepairAdbAsync(options, token));
+            ShowAdbRepairDialog();
         }
 
         private async void OpenAdbEnable()
@@ -347,7 +343,7 @@ namespace WiFitool
             return window.ShowDialog() == true ? (string)window.Tag : null;
         }
 
-        private AdbRepairOptions ShowAdbRepairDialog()
+        private void ShowAdbRepairDialog()
         {
             var window = new Window
             {
@@ -370,7 +366,6 @@ namespace WiFitool
             form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var header = new Grid { Margin = new Thickness(0, 0, 0, 14) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -379,7 +374,7 @@ namespace WiFitool
             close.Click += delegate { window.Close(); };
             Grid.SetColumn(close, 1); header.Children.Add(close);
             form.Children.Add(header);
-            var note = new TextBlock { Text = "自动识别 115200 AT 端口并启动临时文件服务。请先连接设备网络和 USB 数据线。", TextWrapping = TextWrapping.Wrap, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, Margin = new Thickness(0, 0, 0, 14) };
+            var note = new TextBlock { Text = "自动识别 115200 AT 端口并启动临时文件服务。请先连接设备网络和 USB 数据线。修复前请关闭毛坯助手、TFTPd 等可能占用 AT 端口的工具。", TextWrapping = TextWrapping.Wrap, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, Margin = new Thickness(0, 0, 0, 14) };
             Grid.SetRow(note, 1); form.Children.Add(note);
             var fields = new Grid { Margin = new Thickness(0, 0, 0, 10) };
             fields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -396,13 +391,13 @@ namespace WiFitool
             ports.Margin = new Thickness(0, 12, 0, 0); Grid.SetRow(ports, 1); Grid.SetColumn(ports, 1); fields.Children.Add(ports);
             Grid.SetRow(fields, 2); form.Children.Add(fields);
             var state = new TextBlock { Text = "正在自动识别 AT 端口…", Foreground = (Brush)FindResource("MutedBrush"), TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 0, 0, 14) };
-            Grid.SetRow(state, 4); form.Children.Add(state);
+            Grid.SetRow(state, 3); form.Children.Add(state);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             var redetect = new Button { Content = "重新检测", Margin = new Thickness(0, 0, 8, 0) };
             var cancel = new Button { Content = "取消", IsCancel = true, Margin = new Thickness(0, 0, 8, 0) };
             var start = new Button { Content = "开始修复", Style = (Style)FindResource("PrimaryButton"), IsDefault = true, IsEnabled = false };
             buttons.Children.Add(redetect); buttons.Children.Add(cancel); buttons.Children.Add(start);
-            Grid.SetRow(buttons, 5); form.Children.Add(buttons);
+            Grid.SetRow(buttons, 4); form.Children.Add(buttons);
             border.Child = form; window.Content = border;
             CancellationTokenSource detection = null;
             Func<Task> detect = async delegate
@@ -438,83 +433,116 @@ namespace WiFitool
                 finally { if (!current.IsCancellationRequested && window.IsVisible) { start.IsEnabled = true; redetect.IsEnabled = true; } }
             };
             redetect.Click += async delegate { await detect(); };
-            start.Click += delegate
+            start.Click += async delegate
             {
                 IPAddress parsed;
                 if (!IPAddress.TryParse(ip.Text.Trim(), out parsed) || parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) { state.Text = "请输入有效的本机 IPv4 地址。"; return; }
                 var selectedPort = ports.SelectedItem as AtPortInfo;
                 if (selectedPort == null) { state.Text = "请选择 AT 端口。"; return; }
-                window.Tag = new AdbRepairOptions { LocalIp = parsed.ToString(), PortName = selectedPort.PortName };
-                window.DialogResult = true;
+                await CheckAdbStatusAsync();
+                if (adbStatus == null || adbStatus.DeviceState != "offline")
+                {
+                    state.Text = "设备状态已变化，当前不是离线状态，已取消修复。";
+                    return;
+                }
+                var options = new AdbRepairOptions { LocalIp = parsed.ToString(), PortName = selectedPort.PortName };
+                start.IsEnabled = false;
+                redetect.IsEnabled = false;
+                cancel.IsEnabled = false;
+                close.IsEnabled = false;
+                var failed = false;
+                try
+                {
+                    await RunBusyAsync("正在修复离线 ADB…", token => RepairAdbAsync(options, token, message => state.Text = message), message => state.Text = message, delegate(Exception ex)
+                    {
+                        failed = true;
+                        state.Text = "修复失败：" + ex.Message;
+                    });
+                    if (!failed && adbStatus != null && adbStatus.DeviceState == "online") state.Text = "修复完成：ADB 已在线。";
+                }
+                catch (Exception ex)
+                {
+                    failed = true;
+                    state.Text = "修复失败：" + ex.Message;
+                }
+                finally
+                {
+                    close.IsEnabled = true;
+                    cancel.IsEnabled = true;
+                    redetect.IsEnabled = true;
+                    cancel.Content = "关闭";
+                    start.Content = failed ? "重试" : "修复完成";
+                    start.IsEnabled = failed;
+                }
             };
             cancel.Click += delegate { window.Close(); };
             window.Loaded += async delegate { await detect(); };
             window.Closed += delegate { if (detection != null) detection.Cancel(); };
-            return window.ShowDialog() == true ? window.Tag as AdbRepairOptions : null;
+            window.ShowDialog();
         }
 
-        private async Task RepairAdbAsync(AdbRepairOptions options, CancellationToken token)
+        private async Task RepairAdbAsync(AdbRepairOptions options, CancellationToken token, Action<string> reportStatus = null)
         {
             var adbdPath = Path.Combine(ToolEnvironment.Root, "adbd", "adbd");
             if (!File.Exists(adbdPath)) throw new FileNotFoundException("缺少内置 adbd 文件，请先等待工具环境下载完成。", adbdPath);
-            StatusText.Text = "正在连接 AT 端口：" + options.PortName;
+            SetAdbRepairStatus(reportStatus, "正在连接 AT 端口：" + options.PortName);
             using (var at = AtPortService.Open(options.PortName))
             {
                 var test = at.Send("AT", 500);
                 if (test.IndexOf("OK", StringComparison.OrdinalIgnoreCase) < 0) throw new InvalidOperationException("AT 端口无响应，请确认端口没有被其他程序占用。");
+                at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/adb_enable", 700);
+                at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/enable", 700);
                 // 部分设备只需通过专用 AT 命令重启 adbd，无需传输文件。
                 foreach (var compatibilityCommand in new[] { "AT+ZKILL=foo;adbd &", "AT+RKILL=foo;adbd &" })
                 {
-                    StatusText.Text = "正在尝试兼容修复方案…";
+                    SetAdbRepairStatus(reportStatus, "正在尝试兼容修复方案…");
                     at.Send(compatibilityCommand, 1000);
                     await Task.Delay(1800, token);
                     await CheckAdbStatusAsync();
                     if (adbStatus != null && adbStatus.DeviceState == "online")
                     {
-                        StatusText.Text = "修复完成：ADB 已连接";
+                        SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                         return;
                     }
                 }
                 // 轻量探测设备已有的 adbd，存在且可执行时直接启动，避免重复上传。
-                StatusText.Text = "正在检查设备已有 adbd…";
-                at.Send("AT+SHELL=if [ -x /bin/adbd ]; then /bin/adbd &; elif [ -x /mnt/userdata/etc_rw/nv/adbd ]; then /mnt/userdata/etc_rw/nv/adbd &; fi", 1000);
-                await Task.Delay(1800, token);
+                SetAdbRepairStatus(reportStatus, "正在检查设备已有 adbd…");
+                at.Send("AT+SHELL=/bin/adbd &", 1000);
+                await Task.Delay(1200, token);
                 await CheckAdbStatusAsync();
                 if (adbStatus != null && adbStatus.DeviceState == "online")
                 {
-                    StatusText.Text = "修复完成：ADB 已连接";
+                    SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                     return;
                 }
+                at.Send("AT+SHELL=/mnt/userdata/etc_rw/nv/adbd &", 1000);
+                await Task.Delay(1200, token);
+                await CheckAdbStatusAsync();
+                if (adbStatus != null && adbStatus.DeviceState == "online")
                 {
-                    var address = IPAddress.Parse(options.LocalIp);
-                    StatusText.Text = "正在启动临时文件服务…";
-                    using (var server = new AdbdTftpServer(address, adbdPath))
-                    {
-                        try { server.Start(); }
-                        catch (System.Net.Sockets.SocketException ex) { throw new InvalidOperationException("UDP 69 端口被占用或无法监听：" + ex.Message); }
-                        StatusText.Text = "正在等待设备下载 adbd…";
-                        // 设备已验证的流程：默认工作目录为可写 nv 目录，使用原始 tftp 语法。
-                        var download = at.Send("AT+SHELL=rm -f /mnt/userdata/etc_rw/nv/adbd", 700);
-                        download = at.Send("AT+SHELL=tftp -r adbd -g " + options.LocalIp, 1200);
-                        var completed = await Task.WhenAny(server.Downloaded, Task.Delay(20000, token));
-                        token.ThrowIfCancellationRequested();
-                        if (completed != server.Downloaded)
-                            throw new InvalidOperationException("设备未请求 adbd 文件，请确认本机 IP、UDP 69 端口和 TFTP 服务。设备返回：" + download.Trim());
-                    }
-                    StatusText.Text = "正在启动 adbd…";
-                    var targetAdbd = "/mnt/userdata/etc_rw/nv/adbd";
-                    var verify = at.Send("AT+SHELL=test -s " + targetAdbd + " && ls -l " + targetAdbd, 900);
-                    if (verify.IndexOf("OK", StringComparison.OrdinalIgnoreCase) < 0 && verify.IndexOf(targetAdbd, StringComparison.OrdinalIgnoreCase) < 0)
-                        throw new InvalidOperationException("设备未成功下载 " + targetAdbd + "，请确认 TFTP 服务和本机 IP。设备返回：" + verify.Trim());
-                    at.Send("AT+SHELL=chmod 777 " + targetAdbd, 900);
-                    at.Send("AT+SHELL=sync", 700);
-                    at.Send("AT+SHELL=killall adbd 2>/dev/null", 700);
-                    at.Send("AT+SHELL=" + targetAdbd, 1200);
-                    // 只开启 USB gadget 的 ADB 功能，避免先写 0 导致接口被移除。
-                    at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/adb_enable", 700);
+                    SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
+                    return;
                 }
+                var address = IPAddress.Parse(options.LocalIp);
+                SetAdbRepairStatus(reportStatus, "正在启动临时文件服务…");
+                using (var server = new AdbdTftpServer(address, adbdPath))
+                {
+                    try { server.Start(); }
+                    catch (System.Net.Sockets.SocketException ex) { throw new InvalidOperationException("UDP 69 端口被占用或无法监听：" + ex.Message); }
+                    SetAdbRepairStatus(reportStatus, "正在等待设备下载 adbd…");
+                    // 将内置 adbd 下载到可写的 nv 目录。
+                    at.Send("AT+SHELL=rm -f /mnt/userdata/etc_rw/nv/adbd", 700);
+                    var download = at.Send("AT+SHELL=tftp -l /mnt/userdata/etc_rw/nv/adbd -r adbd -g " + options.LocalIp, 1500);
+                    var completed = await Task.WhenAny(server.Downloaded, Task.Delay(20000, token));
+                    token.ThrowIfCancellationRequested();
+                    if (completed != server.Downloaded)
+                        throw new InvalidOperationException("设备未请求 adbd 文件，请确认本机 IP、UDP 69 端口和 TFTP 服务。设备返回：" + download.Trim());
+                }
+                SetAdbRepairStatus(reportStatus, "正在启动 adbd…");
+                var startCommand = "chmod 777 /mnt/userdata/etc_rw/nv/adbd; sync; killall adbd 2>/dev/null; /mnt/userdata/etc_rw/nv/adbd &";
+                at.Send("AT+SHELL=" + startCommand, 1500);
             }
-            StatusText.Text = "正在等待 ADB 设备上线…";
+            SetAdbRepairStatus(reportStatus, "正在等待 ADB 设备上线…");
             // adbd 启动后 USB gadget 可能需要重新枚举；重启本工具自己的 adb server，避免复用旧 transport。
             try { await adbService.RestartAdbServerAsync(token); } catch { }
             for (var attempt = 0; attempt < 30; attempt++)
@@ -524,12 +552,18 @@ namespace WiFitool
                 if (status.DeviceState == "online")
                 {
                     await CheckAdbStatusAsync();
-                    StatusText.Text = "修复完成：ADB 已连接";
+                    SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                     return;
                 }
                 await Task.Delay(1000, token);
             }
             throw new InvalidOperationException("adbd 已启动，但设备仍未进入 ADB online 状态。请检查 USB 是否重新枚举，或确认设备端 adb_enable 已开启。" );
+        }
+
+        private void SetAdbRepairStatus(Action<string> reportStatus, string message)
+        {
+            StatusText.Text = message;
+            if (reportStatus != null) reportStatus(message);
         }
 
         private static string GetPreferredLocalIp()

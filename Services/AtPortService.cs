@@ -29,7 +29,7 @@ namespace WiFitool.Services
         public string Send(string command, int waitMilliseconds = 800)
         {
             port.DiscardInBuffer();
-            port.Write(command + "\r");
+            port.Write(command + "\r\n");
             Thread.Sleep(waitMilliseconds);
             return port.BytesToRead > 0 ? port.ReadExisting() : "";
         }
@@ -121,7 +121,7 @@ namespace WiFitool.Services
                 names.TryGetValue(port, out friendlyName);
                 return new AtPortInfo { PortName = port, FriendlyName = friendlyName, IsNamedAtPort = IsAtPortName(friendlyName) };
             }).ToList();
-            return ports.ToList();
+            return ports;
         }
 
         public static AtPortConnection Open(string portName)
@@ -133,8 +133,7 @@ namespace WiFitool.Services
                 DtrEnable = true,
                 RtsEnable = true,
                 ReadTimeout = 1000,
-                WriteTimeout = 1000,
-                NewLine = "\r"
+                WriteTimeout = 1000
             };
             try { port.Open(); return new AtPortConnection(port); }
             catch { port.Dispose(); throw; }

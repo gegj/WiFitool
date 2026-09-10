@@ -1770,11 +1770,22 @@ namespace WiFitool
             e.Handled = true;
         }
 
-        private async Task RunBusyAsync(string message, Func<CancellationToken, Task> action)
+        private async Task RunBusyAsync(string message, Func<CancellationToken, Task> action, Action<string> reportStatus = null, Action<Exception> onError = null)
         {
-            if (activeCancellation != null) return; activeCancellation = new CancellationTokenSource(); StatusText.Text = message;
+            if (activeCancellation != null) return;
+            activeCancellation = new CancellationTokenSource();
+            Action<string> setStatus = value => { StatusText.Text = value; if (reportStatus != null) reportStatus(value); };
+            setStatus(message);
             BeginTaskProgress();
-            try { await action(activeCancellation.Token); } catch (OperationCanceledException) { StatusText.Text = "操作已取消"; } catch (Exception ex) { StatusText.Text = "操作失败：" + ex.Message; MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); } finally { EndTaskProgress(); activeCancellation.Dispose(); activeCancellation = null; }
+            try { await action(activeCancellation.Token); }
+            catch (OperationCanceledException) { setStatus("操作已取消"); }
+            catch (Exception ex)
+            {
+                setStatus("操作失败：" + ex.Message);
+                if (onError != null) onError(ex);
+                else MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally { EndTaskProgress(); activeCancellation.Dispose(); activeCancellation = null; }
         }
 
         private async Task RunTaskProgressAsync(Func<Task> action)
