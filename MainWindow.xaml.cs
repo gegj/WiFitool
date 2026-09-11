@@ -28,6 +28,7 @@ namespace WiFitool
         private readonly ToolRunner toolRunner = new ToolRunner();
         private readonly FileSystemService fileSystemService;
         private readonly AdbService adbService;
+        private readonly DriverInstallService driverInstallService = new DriverInstallService();
         private readonly LogService logService = LogService.Instance;
         private readonly RootfsFeatureService rootfsFeatureService = new RootfsFeatureService();
         private readonly UpdateService updateService = new UpdateService();

@@ -42,7 +42,8 @@ namespace WiFitool
             toolboxItems.AddRange(new[] {
                 new ToolboxItem { Name = "设置 ADB", Description = "通过设备 Web 接口开启或关闭调试模式", Type = "builtin", BuiltinId = "adb-settings", Icon = "⌁" },
                 new ToolboxItem { Name = "ADB离线修复", Description = "自动通过 AT 端口恢复离线 ADB", Type = "builtin", BuiltinId = "adb-repair", Icon = "⌁" },
-                new ToolboxItem { Name = "修复无限重启", Description = "在设备重启间隙覆盖或删除设备文件", Type = "builtin", BuiltinId = "infinite-reboot-repair", Icon = "⌁" }
+                new ToolboxItem { Name = "修复无限重启", Description = "在设备重启间隙覆盖或删除设备文件", Type = "builtin", BuiltinId = "infinite-reboot-repair", Icon = "⌁" },
+                new ToolboxItem { Name = "驱动安装", Description = "下载并按顺序安装设备驱动", Type = "builtin", BuiltinId = "driver-install", Icon = "⇩" }
             });
             ToolboxView.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             ToolboxView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -246,6 +247,7 @@ namespace WiFitool
                     case "adb-repair": OpenAdbRepair(); break;
                     case "adb-settings": OpenAdbSettings(); break;
                     case "infinite-reboot-repair": ShowInfiniteRebootRepairDialog(); break;
+                    case "driver-install": ShowDriverInstallDialog(); break;
                 }
                 return;
             }
@@ -280,6 +282,135 @@ namespace WiFitool
         {
             if (activeCancellation != null) { StatusText.Text = "请等待当前操作完成"; return; }
             ShowAdbSettingsDialog();
+        }
+
+        private void ShowDriverInstallDialog()
+        {
+            var window = new Window
+            {
+                Owner = this,
+                Title = "驱动安装",
+                Width = 650,
+                SizeToContent = SizeToContent.Height,
+                MaxHeight = Math.Max(420, SystemParameters.WorkArea.Height - 40),
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                Background = Brushes.Transparent,
+                ShowInTaskbar = false
+            };
+            var border = new Border { Background = (Brush)FindResource("PanelBrush"), BorderBrush = (Brush)FindResource("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(20) };
+            border.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 22, ShadowDepth = 5, Opacity = 0.42, Color = Colors.Black };
+            var form = new Grid();
+            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var header = new Grid { Margin = new Thickness(0, 0, 0, 14) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.Children.Add(new TextBlock { Text = "驱动安装", FontSize = 17, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            var close = new Button { Content = "×", Width = 30, Height = 30, Padding = new Thickness(0), Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 18 };
+            Grid.SetColumn(close, 1); header.Children.Add(close);
+            Grid.SetRow(header, 0); form.Children.Add(header);
+
+            var note = new TextBlock
+            {
+                Text = "从网络下载驱动并启动安装程序。每个安装程序结束后才会继续下一个，完成后自动清理临时文件。",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)FindResource("MutedBrush"),
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
+            Grid.SetRow(note, 1); form.Children.Add(note);
+
+            var cards = new StackPanel();
+            var scroll = new ScrollViewer { Content = cards, MaxHeight = Math.Max(260, SystemParameters.WorkArea.Height - 300), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            Grid.SetRow(scroll, 2); form.Children.Add(scroll);
+
+            var state = new TextBlock { Text = "请选择要安装的驱动", Foreground = (Brush)FindResource("MutedBrush"), TextWrapping = TextWrapping.Wrap, MinHeight = 34, Margin = new Thickness(0, 14, 0, 0) };
+            Grid.SetRow(state, 3); form.Children.Add(state);
+
+            var closeBottom = new Button { Content = "关闭", Width = 78, MinWidth = 78 };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+            buttons.Children.Add(closeBottom);
+            Grid.SetRow(buttons, 4); form.Children.Add(buttons);
+            border.Child = form;
+            window.Content = border;
+
+            var installButtons = new List<Button>();
+            var operationRunning = false;
+            Action closeWindow = delegate
+            {
+                if (operationRunning) { SetDriverInstallStatus(state, "安装任务正在执行，请等待完成。"); return; }
+                window.Close();
+            };
+            close.Click += delegate { closeWindow(); };
+            closeBottom.Click += delegate { closeWindow(); };
+            window.Closing += delegate(object sender, CancelEventArgs e)
+            {
+                if (!operationRunning) return;
+                e.Cancel = true;
+                SetDriverInstallStatus(state, "安装任务正在执行，请等待完成。");
+            };
+
+            foreach (var package in driverInstallService.Packages)
+            {
+                var selectedPackage = package;
+                var install = new Button { Content = "安装", Style = (Style)FindResource("PrimaryButton"), Width = 78, MinWidth = 78, Margin = new Thickness(14, 0, 0, 0) };
+                installButtons.Add(install);
+                install.Click += async delegate
+                {
+                    if (operationRunning) return;
+                    operationRunning = true;
+                    foreach (var button in installButtons) button.IsEnabled = false;
+                    close.IsEnabled = false;
+                    closeBottom.IsEnabled = false;
+                    try
+                    {
+                        await RunBusyAsync("正在安装 " + selectedPackage.Name + "…", token => driverInstallService.InstallAsync(selectedPackage, token, message => SetDriverInstallStatus(state, message)), message => SetDriverInstallStatus(state, message), delegate(Exception ex) { SetDriverInstallStatus(state, "安装失败：" + ex.Message); });
+                    }
+                    finally
+                    {
+                        operationRunning = false;
+                        foreach (var button in installButtons) button.IsEnabled = true;
+                        close.IsEnabled = true;
+                        closeBottom.IsEnabled = true;
+                    }
+                };
+                cards.Children.Add(CreateDriverInstallCard(selectedPackage, install));
+            }
+
+            window.ShowDialog();
+        }
+
+        private Border CreateDriverInstallCard(DriverInstallPackage package, Button install)
+        {
+            var border = new Border { Background = (Brush)FindResource("PanelAltBrush"), BorderBrush = (Brush)FindResource("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14), Margin = new Thickness(0, 0, 0, 10) };
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var title = new TextBlock { Text = package.Name, FontSize = 14, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
+            Grid.SetColumn(title, 0); Grid.SetRow(title, 0); grid.Children.Add(title);
+            var description = new TextBlock { Text = package.Description, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) };
+            Grid.SetColumn(description, 0); Grid.SetRow(description, 1); grid.Children.Add(description);
+            var plan = new TextBlock { Text = "安装顺序：" + package.Plan, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) };
+            Grid.SetColumn(plan, 0); Grid.SetRow(plan, 2); grid.Children.Add(plan);
+            Grid.SetColumn(install, 1); Grid.SetRow(install, 0); Grid.SetRowSpan(install, 3); install.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(install);
+            border.Child = grid;
+            return border;
+        }
+
+        private void SetDriverInstallStatus(TextBlock state, string message)
+        {
+            state.Text = message;
+            StatusText.Text = message;
         }
 
         private async Task RunAdbSettingsActionAsync(TextBox ip, TextBlock state, Button enableButton, Button disableButton, Button closeButton, bool enableAdb)
