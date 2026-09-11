@@ -578,12 +578,6 @@ namespace WiFitool.Services
             ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var tempDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Temp"); Directory.CreateDirectory(tempDirectory); var local = Path.Combine(tempDirectory, "adb-hosts-" + Guid.NewGuid().ToString("N")); try { await EnsureDevicePathWritableAsync(serial, path, token); File.WriteAllBytes(local, bytes); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", local, path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备文件失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod", "0775", path }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置 hosts 权限失败：" + chmod.StandardError); } finally { try { if (File.Exists(local)) File.Delete(local); } catch { } }
         }
 
-        public async Task UploadNewFileAsync(string serial, string virtualDirectory, string localPath, CancellationToken token)
-        {
-            var remote = CombineRemotePath(NormalizeRemotePath(virtualDirectory), Path.GetFileName(localPath));
-            await UploadFileAsync(serial, remote, localPath, false, token);
-        }
-
         public async Task UploadFileAsync(string serial, string virtualPath, string localPath, bool direct, CancellationToken token)
         {
             ValidateSerial(serial);
@@ -945,3 +939,4 @@ namespace WiFitool.Services
         private static string CleanFileName(string value) { foreach (var c in Path.GetInvalidFileNameChars()) value = value.Replace(c, '_'); return value; }
     }
 }
+

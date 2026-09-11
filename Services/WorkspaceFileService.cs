@@ -262,7 +262,7 @@ namespace WiFitool.Services
             {
                 if (Path.GetFileName(file) == ".wifitool.metadata") continue;
                 if (excludePaths != null && excludePaths.Contains(file)) continue;
-                var target = file.Replace(source, destination);
+                var relative = file.Substring(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); var target = Path.Combine(destination, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(target));
                 File.Copy(file, target, true);
             }
@@ -272,7 +272,7 @@ namespace WiFitool.Services
         {
             Directory.CreateDirectory(destination);
             foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
-                if (!Path.GetFileName(directory).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase)) Directory.CreateDirectory(directory.Replace(source, destination));
+                if (!Path.GetFileName(directory).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase)) Directory.CreateDirectory(Path.Combine(destination, directory.Substring(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
             CopyDirectory(source, destination);
         }
 
@@ -309,3 +309,4 @@ namespace WiFitool.Services
         }
     }
 }
+

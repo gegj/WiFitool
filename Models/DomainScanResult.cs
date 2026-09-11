@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 
 namespace WiFitool.Models
@@ -24,3 +23,4 @@ namespace WiFitool.Models
         public string FilePath { get; set; }
     }
 }
+

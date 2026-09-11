@@ -87,7 +87,7 @@ namespace WiFitool
             SetView(ToolboxView);
             if (!toolboxLoaded)
             {
-                try { toolboxLoaded = true; toolboxError.Visibility = Visibility.Collapsed; }
+                try { toolboxItems.AddRange(toolboxService.Load()); toolboxLoaded = true; toolboxError.Visibility = Visibility.Collapsed; }
                 catch (Exception ex) { toolboxError.Text = "工具配置读取失败，已停止写入：" + ex.Message; toolboxError.Visibility = Visibility.Visible; }
             }
             RefreshToolbox();
@@ -110,7 +110,7 @@ namespace WiFitool
                 {
                     var menu = new ContextMenu();
                     var edit = new MenuItem { Header = "编辑名称和介绍" };
-                    edit.Click += delegate { AddToolboxUrl(item); };
+                    edit.Click += delegate { EditToolboxExecutable(item); };
                     var delete = new MenuItem { Header = "删除" };
                     delete.Click += delegate { DeleteToolboxItem(item); };
                     menu.Items.Add(edit);
@@ -127,11 +127,11 @@ namespace WiFitool
                 content.Children.Add(title);
                 content.Children.Add(new TextBlock { Text = item.Description, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 12) });
                 var footer = new DockPanel();
-                var open = new Button { Content = "打开 →", Style = (Style)FindResource("CompactButton"), ToolTip = item.Type == "url" ? item.Url : item.ExecutablePath };
+                var open = new Button { Content = "打开 →", Style = (Style)FindResource("CompactButton"), ToolTip = item.ExecutablePath };
                 open.Click += delegate { OpenToolboxItem(item); };
                 DockPanel.SetDock(open, Dock.Right);
                 footer.Children.Add(open);
-                footer.Children.Add(new TextBlock { Text = item.Type == "builtin" ? "内置工具" : item.Type == "url" ? "URL 外链工具" : "本地快捷方式", FontSize = 11, Foreground = (Brush)FindResource("MutedBrush"), VerticalAlignment = VerticalAlignment.Center });
+                footer.Children.Add(new TextBlock { Text = item.Type == "builtin" ? "内置工具" : "本地快捷方式", FontSize = 11, Foreground = (Brush)FindResource("MutedBrush"), VerticalAlignment = VerticalAlignment.Center });
                 content.Children.Add(footer);
                 card.Child = content;
                 toolboxCards.Children.Add(card);
@@ -203,42 +203,35 @@ namespace WiFitool
             StatusText.Text = "已删除工具：" + item.Name;
         }
 
-        private void AddToolboxUrl(ToolboxItem original = null)
+        private void EditToolboxExecutable(ToolboxItem original)
         {
-            var dialog = new Window { Owner = this, Title = original == null ? "添加 URL 工具" : "编辑工具", Width = 440, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false, Icon = Icon };
+            var dialog = new Window { Owner = this, Title = "编辑工具", Width = 440, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false, Icon = Icon };
             var form = new StackPanel { Margin = new Thickness(20) };
-            var fields = new List<TextBox>();
-            foreach (var label in new[] { "名称", original != null && original.Type == "exe" ? "EXE 路径" : "URL", "介绍（可选）" })
-            {
-                form.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 6) });
-                var field = new TextBox { Margin = new Thickness(0, 0, 0, 12) };
-                fields.Add(field); form.Children.Add(field);
-            }
-            if (original != null)
-            {
-                fields[0].Text = original.Name;
-                fields[1].Text = original.Type == "exe" ? original.ExecutablePath : original.Url;
-                fields[1].IsReadOnly = true;
-                fields[2].Text = original.Description ?? "";
-            }
+            form.Children.Add(new TextBlock { Text = "名称", Margin = new Thickness(0, 0, 0, 6) });
+            var name = new TextBox { Text = original.Name, Margin = new Thickness(0, 0, 0, 12) };
+            form.Children.Add(name);
+            form.Children.Add(new TextBlock { Text = "EXE 路径", Margin = new Thickness(0, 0, 0, 6) });
+            form.Children.Add(new TextBox { Text = original.ExecutablePath, IsReadOnly = true, Margin = new Thickness(0, 0, 0, 12) });
+            form.Children.Add(new TextBlock { Text = "介绍（可选）", Margin = new Thickness(0, 0, 0, 6) });
+            var description = new TextBox { Text = original.Description ?? "", Margin = new Thickness(0, 0, 0, 12) };
+            form.Children.Add(description);
             var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = (Brush)FindResource("MutedBrush") };
             form.Children.Add(error);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             var cancel = new Button { Content = "取消", IsCancel = true };
-            var save = new Button { Content = original == null ? "添加" : "保存", IsDefault = true, Style = (Style)FindResource("PrimaryButton") };
-            save.Click += delegate {
-                if (string.IsNullOrWhiteSpace(fields[0].Text)) { error.Text = "请输入工具名称"; return; }
-                if (original == null && !ToolboxService.IsWebUrl(fields[1].Text.Trim())) { error.Text = "请输入有效的 HTTP 或 HTTPS 地址"; return; }
-                var item = new ToolboxItem { Name = fields[0].Text.Trim(), Url = original == null ? fields[1].Text.Trim() : original.Url, Description = fields[2].Text.Trim(), Type = original == null ? "url" : original.Type, Icon = original == null ? "↗" : original.Icon, ExecutablePath = original == null ? null : original.ExecutablePath };
+            var save = new Button { Content = "保存", IsDefault = true, Style = (Style)FindResource("PrimaryButton") };
+            save.Click += delegate
+            {
+                if (string.IsNullOrWhiteSpace(name.Text)) { error.Text = "请输入工具名称"; return; }
+                var item = new ToolboxItem { Name = name.Text.Trim(), Description = description.Text.Trim(), Type = "exe", ExecutablePath = original.ExecutablePath, Icon = original.Icon };
                 if (SaveToolboxItem(item, original)) dialog.DialogResult = true;
                 else error.Text = StatusText.Text;
             };
             buttons.Children.Add(cancel); buttons.Children.Add(save); form.Children.Add(buttons);
             dialog.Content = form;
-            dialog.Loaded += delegate { fields[0].Focus(); };
+            dialog.Loaded += delegate { name.Focus(); name.SelectAll(); };
             dialog.ShowDialog();
         }
-
         private void OpenToolboxItem(ToolboxItem item)
         {
             if (item.Type == "builtin")
@@ -257,10 +250,9 @@ namespace WiFitool
                 return;
             }
             if (item.Type == "exe" && !File.Exists(item.ExecutablePath)) { StatusText.Text = "工具文件不存在，快捷方式已保留：" + item.ExecutablePath; return; }
-            if (item.Type == "url" && !ToolboxService.IsWebUrl(item.Url)) { StatusText.Text = "URL 无效，仅支持 HTTP 和 HTTPS"; return; }
             try
             {
-                var start = new ProcessStartInfo { FileName = item.Type == "exe" ? item.ExecutablePath : item.Url, UseShellExecute = true };
+                var start = new ProcessStartInfo { FileName = item.ExecutablePath, UseShellExecute = true };
                 if (item.Type == "exe") start.WorkingDirectory = Path.GetDirectoryName(item.ExecutablePath);
                 using (Process.Start(start)) { }
                 StatusText.Text = "已打开：" + item.Name;
@@ -405,7 +397,7 @@ namespace WiFitool
                 if (operationRunning) { state.Text = "任务正在执行，请先点击“停止”。"; return; }
                 var serial = await FindInfiniteRebootPickerSerialAsync(state);
                 if (string.IsNullOrWhiteSpace(serial)) return;
-                var directory = await ShowDevicePathPickerAsync(window, serial, true);
+                var directory = ShowDevicePathPicker(window, serial, true);
                 if (directory == null) return;
                 replaceDirectory = directory;
                 updateReplaceTarget();
@@ -521,7 +513,7 @@ namespace WiFitool
             return "";
         }
 
-        private Task<string> ShowDevicePathPickerAsync(Window owner, string serial, bool selectDirectory)
+        private string ShowDevicePathPicker(Window owner, string serial, bool selectDirectory)
         {
             var window = new Window
             {
@@ -666,7 +658,7 @@ namespace WiFitool
             window.Closed += delegate { loadingCancellation.Cancel(); loadingCancellation.Dispose(); };
             window.Loaded += async delegate { await loadDirectory(); };
             window.ShowDialog();
-            return Task.FromResult(window.Tag as string);
+            return window.Tag as string;
         }
 
         private async Task RunInfiniteRebootToolOperationAsync(Window window, TextBlock state, Button replaceStart, Button deleteStart, Button stop, Button close, Button closeBottom, string actionName, Func<string, CancellationToken, Task> action)
@@ -1025,3 +1017,4 @@ namespace WiFitool
         }
     }
 }
+

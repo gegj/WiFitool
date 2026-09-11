@@ -14,25 +14,13 @@ namespace WiFitool.Services
         public ToolboxService() : this(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WiFitool", "tools.json")) { }
         public ToolboxService(string path) { filePath = path; }
 
-        public static bool IsWebUrl(string value)
-        {
-            Uri uri;
-            return Uri.TryCreate(value, UriKind.Absolute, out uri) &&
-                (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) && !string.IsNullOrEmpty(uri.Host);
-        }
-
         public List<ToolboxItem> Load()
         {
             if (!File.Exists(filePath)) return new List<ToolboxItem>();
             using (var stream = File.OpenRead(filePath))
             {
                 var items = (List<ToolboxItem>)new DataContractJsonSerializer(typeof(List<ToolboxItem>)).ReadObject(stream);
-                if (items == null || items.Any(item => item == null || string.IsNullOrWhiteSpace(item.Name) ||
-                    (item.Type != "url" && item.Type != "exe") ||
-                    (item.Type == "url" && !IsWebUrl(item.Url)) ||
-                    (item.Type == "exe" && (string.IsNullOrWhiteSpace(item.ExecutablePath) || !Path.IsPathRooted(item.ExecutablePath) ||
-                    !string.Equals(Path.GetExtension(item.ExecutablePath), ".exe", StringComparison.OrdinalIgnoreCase)))))
-                    throw new SerializationException("工具配置格式无效，原文件已保留。");
+                items = items == null ? new List<ToolboxItem>() : items.Where(item => item != null && item.Type == "exe" && !string.IsNullOrWhiteSpace(item.Name) && !string.IsNullOrWhiteSpace(item.ExecutablePath) && Path.IsPathRooted(item.ExecutablePath) && string.Equals(Path.GetExtension(item.ExecutablePath), ".exe", StringComparison.OrdinalIgnoreCase)).ToList();
                 return items;
             }
         }
@@ -52,3 +40,5 @@ namespace WiFitool.Services
         }
     }
 }
+
+

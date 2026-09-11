@@ -17,23 +17,24 @@ namespace WiFitool.Services
         private static readonly HashSet<string> PublicDns = LoadSet("ignore_ips");
         private static readonly HashSet<string> TimeHosts = LoadSet("ignore_hosts");
         private static readonly HashSet<string> ImageExtensions = LoadSet("ignore_extensions");
-        private static readonly HashSet<string> IgnoredExtensions = ImageExtensions;
         private static readonly HashSet<string> IgnoredDirectories = LoadSet("ignore_directories");
         private static readonly Lazy<HashSet<string>> KnownTlds = new Lazy<HashSet<string>>(LoadTlds);
 
         public List<DomainScanResult> Scan(string root, CancellationToken token, Action<string> progress)
         {
             var results = new List<DomainScanResult>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seen = new Dictionary<string, DomainScanResult>(StringComparer.OrdinalIgnoreCase);
             var webDirectory = Path.Combine(root, "__domain_scan_no_directory_filter__");
             var webPrefix = Path.GetFullPath(webDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Where(x => !Path.GetFileName(x).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase) && !Path.GetFullPath(x).StartsWith(webPrefix, StringComparison.OrdinalIgnoreCase) && !IsIgnoredPath(root, x));
             foreach (var file in files)
             {
                 token.ThrowIfCancellationRequested(); if (progress != null) progress(file);
-                if (IsSymlinkCookie(file)) continue;
+                byte[] bytes;
+                try { bytes = File.ReadAllBytes(file); } catch { continue; }
+                if (IsSymlinkCookie(bytes)) continue;
                 if (ImageExtensions.Contains(Path.GetExtension(file))) continue;
-                ScanFile(root, file, results, seen, token);
+                ScanFile(root, file, bytes, results, seen, token);
             }
             return results;
         }
@@ -73,9 +74,8 @@ namespace WiFitool.Services
             item.Address = newAddress;
         }
 
-        private static void ScanFile(string root, string file, List<DomainScanResult> results, HashSet<string> seen, CancellationToken token)
+        private static void ScanFile(string root, string file, byte[] bytes, List<DomainScanResult> results, Dictionary<string, DomainScanResult> seen, CancellationToken token)
         {
-            var bytes = File.ReadAllBytes(file);
             var start = 0;
             while (start < bytes.Length)
             {
@@ -99,7 +99,7 @@ namespace WiFitool.Services
                     var relative = file.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace(Path.DirectorySeparatorChar, '/');
                     var hostIndex = raw.IndexOf(hostOnly, StringComparison.OrdinalIgnoreCase);
                     var offset = start + match.Index + Math.Max(0, hostIndex);
-                    DomainScanResult result; if (!seen.Contains(hostOnly)) { result = new DomainScanResult { Address = hostOnly, FilePath = relative, SourcePath = file, Offset = offset, IsIp = isIp, DnsStatus = "未验证" }; result.Occurrences.Add(new DomainScanOccurrence { SourcePath = file, FilePath = relative, Offset = offset }); results.Add(result); seen.Add(hostOnly); } else { result = results.First(x => x.Address.Equals(hostOnly, StringComparison.OrdinalIgnoreCase)); result.Occurrences.Add(new DomainScanOccurrence { SourcePath = file, FilePath = relative, Offset = offset }); }
+                    DomainScanResult result; if (!seen.TryGetValue(hostOnly, out result)) { result = new DomainScanResult { Address = hostOnly, FilePath = relative, SourcePath = file, Offset = offset, IsIp = isIp, DnsStatus = "未验证" }; results.Add(result); seen.Add(hostOnly, result); } result.Occurrences.Add(new DomainScanOccurrence { SourcePath = file, FilePath = relative, Offset = offset });
                 }
                 start = end;
             }
@@ -143,7 +143,7 @@ namespace WiFitool.Services
         {
             var valueWithoutQuery = value.Split(new[] { '?', '#' }, 2)[0];
             var extension = Path.GetExtension(valueWithoutQuery);
-            return ImageExtensions.Contains(extension) || IgnoredExtensions.Contains(extension) || string.Equals(extension, ".svg", StringComparison.OrdinalIgnoreCase);
+            return ImageExtensions.Contains(extension) || string.Equals(extension, ".svg", StringComparison.OrdinalIgnoreCase);
         }
         private static bool IsIgnoredPath(string root, string file)
         {
@@ -159,8 +159,9 @@ namespace WiFitool.Services
             }
             return false;
         }
-        private static bool IsSymlinkCookie(string file) { try { var b = File.ReadAllBytes(file); return Encoding.ASCII.GetBytes("WIFITOOL_SYMLINK\n").SequenceEqual(b.Take(15)) || Encoding.ASCII.GetBytes("!<symlink>").SequenceEqual(b.Take(10)); } catch { return false; } }
+        private static bool IsSymlinkCookie(byte[] bytes) { var marker = Encoding.ASCII.GetBytes("WIFITOOL_SYMLINK\n"); var jffs = Encoding.ASCII.GetBytes("!<symlink>"); return bytes.Length >= marker.Length && marker.SequenceEqual(bytes.Take(marker.Length)) || bytes.Length >= jffs.Length && jffs.SequenceEqual(bytes.Take(jffs.Length)); }
         private static string RewriteDomain(string value) { var dot = value.LastIndexOf('.'); if (dot < 0 || dot == value.Length - 1) throw new InvalidDataException("域名格式不支持改写。"); var chars = value.ToCharArray(); chars[value.Length - 1] = 'y'; return new string(chars); }
         private static string RewriteIp(string value) { var chars = value.ToCharArray(); var index = value.IndexOf('.'); if (index < 0) throw new InvalidDataException("IPv4 格式不支持改写。"); chars[index == 0 ? value.Length - 1 : index - 1] = 'y'; return new string(chars); }
     }
 }
+

@@ -31,6 +31,7 @@ namespace WiFitool
         private readonly RootfsFeatureService rootfsFeatureService = new RootfsFeatureService();
         private readonly UpdateService updateService = new UpdateService();
         private readonly DispatcherTimer adbTimer;
+        private readonly WorkspaceMetadataService metadataService = new WorkspaceMetadataService();
         private readonly ObservableCollection<WorkspaceEntry> files = new ObservableCollection<WorkspaceEntry>();
         private readonly ObservableCollection<DomainScanResult> domainResults = new ObservableCollection<DomainScanResult>();
         private readonly DomainScanner domainScanner = new DomainScanner();
@@ -1458,7 +1459,6 @@ namespace WiFitool
         }
 
         private static string CombineVirtualPath(string directory, string name) { return directory == "/" ? "/" + name : directory.TrimEnd('/') + "/" + name; }
-        private static string ParentVirtualPath(string path) { var normalized = (path ?? "/").TrimEnd('/'); var index = normalized.LastIndexOf('/'); return index <= 0 ? "/" : normalized.Substring(0, index); }
 
         private string Prompt(string title, string label, string defaultValue = "")
         {
@@ -1646,7 +1646,7 @@ namespace WiFitool
                 {
                     if (string.IsNullOrEmpty(currentRoot)) { MessageBox.Show(this, "请先在项目概览中解包并选择分区。", "Hosts", MessageBoxButton.OK, MessageBoxImage.Information); return; }
                     TextFileData data; try { data = fileService.ReadText(currentRoot, hostsPath); } catch { data = new TextFileData { Text = "", EncodingName = "UTF-8", LineEnding = "LF" }; }
-                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true) { data.EncodingName = editor.SelectedEncodingName; data.LineEnding = editor.SelectedLineEnding; await RunTaskProgressAsync(async () => { var path = fileService.Resolve(currentRoot, hostsPath, false); Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) await fileService.SaveTextAsync(currentRoot, hostsPath, data, editor.EditorText); else { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var bytes = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") bytes = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, bytes); if (editor.SelectedEncodingName == "UTF-16 LE") bytes = Prepend(new byte[] { 0xFF, 0xFE }, bytes); if (editor.SelectedEncodingName == "UTF-16 BE") bytes = Prepend(new byte[] { 0xFE, 0xFF }, bytes); File.WriteAllBytes(path, bytes); new WorkspaceMetadataService().Update(currentRoot, hostsPath, new WorkspaceMetadata { Kind = "file", Mode = Convert.ToInt32("775", 8), Owner = "0:0", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); } }); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); }
+                    var editor = new TextEditorWindow("/etc/hosts", data); if (editor.ShowDialog() == true) { data.EncodingName = editor.SelectedEncodingName; data.LineEnding = editor.SelectedLineEnding; await RunTaskProgressAsync(async () => { var path = fileService.Resolve(currentRoot, hostsPath, false); Directory.CreateDirectory(Path.GetDirectoryName(path)); if (File.Exists(path)) await fileService.SaveTextAsync(currentRoot, hostsPath, data, editor.EditorText); else { var encoding = EncodingForName(editor.SelectedEncodingName); var normalized = NormalizeLineEndings(editor.EditorText, editor.SelectedLineEnding); var bytes = encoding.GetBytes(normalized); if (editor.SelectedEncodingName == "UTF-8 BOM") bytes = Prepend(new byte[] { 0xEF, 0xBB, 0xBF }, bytes); if (editor.SelectedEncodingName == "UTF-16 LE") bytes = Prepend(new byte[] { 0xFF, 0xFE }, bytes); if (editor.SelectedEncodingName == "UTF-16 BE") bytes = Prepend(new byte[] { 0xFE, 0xFF }, bytes); File.WriteAllBytes(path, bytes); metadataService.Update(currentRoot, hostsPath, new WorkspaceMetadata { Kind = "file", Mode = Convert.ToInt32("775", 8), Owner = "0:0", Modified = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }); } }); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); }
                 }
             }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "Hosts 管理失败", MessageBoxButton.OK, MessageBoxImage.Error); }
@@ -1719,7 +1719,7 @@ namespace WiFitool
             AdbPortText.Text = state != null && state.PortConnected ? "127.0.0.1:5037" : "--";
             AdbPortStateText.Text = state != null && state.PortConnected ? "已连接" : "未连接";
             AdbDeviceStateText.Text = online ? "在线" : GetAdbStateText(state == null ? "no-port" : state.DeviceState);
-            UpdatePartitionDetails(state == null ? null : state.System, AdbSystemTitleText, AdbSystemFreeText, AdbSystemUsageText, AdbSystemProgress, "系统分区", state == null ? "" : GetRootFsText(state.RootFsMode));
+            UpdatePartitionDetails(state == null ? null : state.System, AdbSystemTitleText, AdbSystemFreeText, AdbSystemUsageText, AdbSystemProgress, "系统分区", state == null ? "" : GetMountModeText(state.RootFsMode));
             UpdatePartitionDetails(state == null ? null : state.Userdata, AdbUserdataTitleText, AdbUserdataFreeText, AdbUserdataUsageText, AdbUserdataProgress, "用户分区", state == null ? "" : GetMountModeText(state.UserdataFsMode));
         }
 
@@ -1729,11 +1729,6 @@ namespace WiFitool
             if (state == "no-device") return "未连接";
             if (state == "no-port") return "ADB 未启动";
             return "未知";
-        }
-
-        private static string GetRootFsText(string mode)
-        {
-            return GetMountModeText(mode);
         }
 
         private static string GetMountModeText(string mode)
@@ -1870,3 +1865,4 @@ namespace WiFitool
         private static string FormatSize(long value) { if (value >= 1024 * 1024) return (value / 1024d / 1024d).ToString("0.##") + " MiB"; return (value / 1024d).ToString("0.##") + " KiB"; }
     }
 }
+
