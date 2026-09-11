@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -18,7 +17,6 @@ namespace WiFitool.Services
         private readonly byte[] file;
         private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
         private readonly TaskCompletionSource<bool> downloaded = new TaskCompletionSource<bool>();
-        private readonly ConcurrentDictionary<string, byte> activeTransfers = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         private UdpClient listener;
 
         public Task Downloaded { get { return downloaded.Task; } }
@@ -59,18 +57,8 @@ namespace WiFitool.Services
                     LogService.Instance.Debug("TFTP", "忽略无效或非读取请求，来源 " + request.RemoteEndPoint);
                     continue;
                 }
-                var transferKey = request.RemoteEndPoint.Address + ":" + request.RemoteEndPoint.Port;
-                if (!activeTransfers.TryAdd(transferKey, 0))
-                {
-                    LogService.Instance.Debug("TFTP", "忽略重复的 adbd 读取请求，来源 " + request.RemoteEndPoint);
-                    continue;
-                }
                 LogService.Instance.Info("TFTP", "收到 adbd 读取请求，来源 " + request.RemoteEndPoint + "，选项 " + FormatOptions(options));
-                _ = Task.Run(async delegate
-                {
-                    try { await TransferAsync(request.RemoteEndPoint, options); }
-                    finally { byte ignored; activeTransfers.TryRemove(transferKey, out ignored); }
-                });
+                _ = Task.Run(() => TransferAsync(request.RemoteEndPoint, options));
             }
             LogService.Instance.Debug("TFTP", "临时 TFTP 监听循环已结束");
         }

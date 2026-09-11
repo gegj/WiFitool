@@ -12,29 +12,34 @@ namespace WiFitool.Services
         private readonly UdpClient listener = new UdpClient(new IPEndPoint(IPAddress.Any, 69));
         private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
         private readonly TaskCompletionSource<string> received = new TaskCompletionSource<string>();
+        private Task listenTask;
 
         public Task<string> Received { get { return received.Task; } }
 
         public void Start()
         {
             LogService.Instance.Debug("TFTP", "路由文件接收服务已启动，监听 UDP 69");
-            _ = ListenAsync();
+            listenTask = ListenAsync();
         }
 
         private async Task ListenAsync()
         {
-            while (!cancellation.IsCancellationRequested)
+            try
             {
-                UdpReceiveResult request;
-                try { request = await listener.ReceiveAsync(); }
-                catch (ObjectDisposedException) { return; }
-                catch (SocketException ex) { if (cancellation.IsCancellationRequested) return; LogService.Instance.Warn("TFTP", "接收路由文件请求时发生 Socket 异常", ex); continue; }
-                if (IsRouteWriteRequest(request.Buffer))
+                while (!cancellation.IsCancellationRequested && !received.Task.IsCompleted)
                 {
+                    UdpReceiveResult request;
+                    try { request = await listener.ReceiveAsync(); }
+                    catch (ObjectDisposedException) { return; }
+                    catch (SocketException ex) { if (cancellation.IsCancellationRequested) return; LogService.Instance.Warn("TFTP", "接收路由文件请求时发生 Socket 异常", ex); continue; }
+                    if (!IsRouteWriteRequest(request.Buffer)) continue;
                     LogService.Instance.Info("TFTP", "收到 route.txt 上传请求，来源 " + request.RemoteEndPoint);
-                    _ = Task.Run(() => ReceiveAsync(request.RemoteEndPoint));
+                    await ReceiveAsync(request.RemoteEndPoint);
                 }
             }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex) { LogService.Instance.Error("TFTP", "路由文件监听失败", ex); }
         }
 
         private static bool IsRouteWriteRequest(byte[] request)
@@ -54,16 +59,19 @@ namespace WiFitool.Services
                     LogService.Instance.Debug("TFTP", "开始接收 route.txt，来源 " + remote);
                     await transfer.SendAsync(new byte[] { 0, 4, 0, 0 }, 4);
                     var content = new StringBuilder();
-                    var expected = 1;
-                    while (!cancellation.IsCancellationRequested)
-                    {
-                        var receive = transfer.ReceiveAsync();
-                        if (await Task.WhenAny(receive, Task.Delay(3000, cancellation.Token)) != receive)
+                        var expected = 1;
+                        while (!cancellation.IsCancellationRequested)
                         {
-                            LogService.Instance.Warn("TFTP", "等待 route.txt 数据块超时，来源 " + remote);
-                            return;
-                        }
-                        var data = receive.Result.Buffer;
+                            var receive = transfer.ReceiveAsync();
+                            if (await Task.WhenAny(receive, Task.Delay(3000, cancellation.Token)) != receive)
+                            {
+                                try { transfer.Close(); } catch { }
+                                try { await receive; } catch (OperationCanceledException) { } catch (ObjectDisposedException) { } catch (SocketException) { }
+                                if (cancellation.IsCancellationRequested) LogService.Instance.Debug("TFTP", "route.txt 接收被取消，来源 " + remote);
+                                else LogService.Instance.Warn("TFTP", "等待 route.txt 数据块超时，来源 " + remote);
+                                return;
+                            }
+                            var data = (await receive).Buffer;
                         if (data.Length < 4 || data[0] != 0 || data[1] != 3)
                         {
                             LogService.Instance.Warn("TFTP", "收到无效 route.txt 数据包，来源 " + remote);
@@ -97,7 +105,8 @@ namespace WiFitool.Services
         {
             cancellation.Cancel();
             listener.Close();
-            cancellation.Dispose();
+            if (listenTask == null || listenTask.IsCompleted) cancellation.Dispose();
+            else listenTask.ContinueWith(delegate { cancellation.Dispose(); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             LogService.Instance.Debug("TFTP", "路由文件接收服务已停止");
         }
     }

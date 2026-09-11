@@ -1027,25 +1027,26 @@ namespace WiFitool
                 LogService.Instance.Debug("ADBRepair", "AT 端口响应正常");
                 at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/adb_enable", 700);
                 at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/enable", 700);
-                // 部分设备只需通过专用 AT 命令重启 adbd，无需传输文件。
                 foreach (var compatibilityCommand in new[] { "AT+ZKILL=foo;adbd &", "AT+RKILL=foo;adbd &" })
                 {
                     SetAdbRepairStatus(reportStatus, "正在尝试兼容修复方案…");
                     LogService.Instance.Info("ADBRepair", "尝试兼容命令：" + compatibilityCommand);
                     at.Send(compatibilityCommand, 1000);
                     await Task.Delay(1800, token);
-                    if (await WaitForAdbOnlineAsync(token, 2, 400))
+                    await CheckAdbStatusAsync();
+                    if (adbStatus != null && adbStatus.DeviceState == "online")
                     {
                         LogService.Instance.Info("ADBRepair", "兼容命令已使 ADB 在线");
                         SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                         return;
                     }
                 }
-                // 只优先尝试系统正式目录中的 adbd，避免重复上传设备已经具备的文件。
                 SetAdbRepairStatus(reportStatus, "正在检查设备已有 adbd…");
                 LogService.Instance.Info("ADBRepair", "检查并尝试启动设备已有 /bin/adbd");
                 at.Send("AT+SHELL=if [ -f /bin/adbd ]; then /bin/adbd &; fi", 1000);
-                if (await WaitForAdbOnlineAsync(token, 6, 500))
+                await Task.Delay(1200, token);
+                await CheckAdbStatusAsync();
+                if (adbStatus != null && adbStatus.DeviceState == "online")
                 {
                     LogService.Instance.Info("ADBRepair", "设备已有 /bin/adbd 已使 ADB 在线");
                     SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
@@ -1055,13 +1056,6 @@ namespace WiFitool
                 var rootWritable = IsRootPartitionWritable(mounts);
                 var targetAdbd = rootWritable ? "/bin/adbd" : "/mnt/userdata/etc_rw/nv/adbd";
                 LogService.Instance.Info("ADBRepair", "根分区状态 " + (rootWritable ? "rw" : "ro") + "，上传目标 " + targetAdbd);
-                await CheckAdbStatusAsync();
-                if (adbStatus != null && adbStatus.DeviceState == "online")
-                {
-                    LogService.Instance.Info("ADBRepair", "设备已在上传前上线，取消后续 TFTP 操作");
-                    SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
-                    return;
-                }
                 var address = IPAddress.Parse(options.LocalIp);
                 SetAdbRepairStatus(reportStatus, "正在启动临时文件服务…");
                 using (var server = new AdbdTftpServer(address, adbdPath))
@@ -1076,19 +1070,27 @@ namespace WiFitool
                     if (completed != server.Downloaded)
                         throw new InvalidOperationException("设备未请求 adbd 文件，请确认本机 IP、UDP 69 端口和 TFTP 服务。设备返回：" + download.Trim());
                 }
-                SetAdbRepairStatus(reportStatus, "正在启动 adbd…");
-                LogService.Instance.Info("ADBRepair", "TFTP 下载完成，启动设备端 " + targetAdbd);
+                SetAdbRepairStatus(reportStatus, "正在检查设备端 adbd 文件…");
+                var verify = at.Send("AT+SHELL=ls -l " + targetAdbd, 900);
+                LogService.Instance.Info("ADBRepair", "上传后设备文件检查响应：" + verify.Trim());
                 if (rootWritable)
                 {
                     LogService.Instance.Info("ADBRepair", "确保 /etc/rc 中存在 adbd & 启动项");
                     at.Send("AT+SHELL=grep -q \"adbd &\" /etc/rc 2>/dev/null || echo adbd\\ \\& >> /etc/rc", 900);
                 }
-                var startCommand = "chmod 777 " + targetAdbd + "; sync; killall adbd 2>/dev/null; " + targetAdbd + " &";
-                at.Send("AT+SHELL=" + startCommand, 1500);
+                SetAdbRepairStatus(reportStatus, "正在按顺序启动 adbd…");
+                LogService.Instance.Info("ADBRepair", "执行启动步骤 1/5：chmod 777 " + targetAdbd);
+                at.Send("AT+SHELL=chmod 777 " + targetAdbd, 900);
+                LogService.Instance.Info("ADBRepair", "执行启动步骤 2/5：sync");
+                at.Send("AT+SHELL=sync", 700);
+                LogService.Instance.Info("ADBRepair", "执行启动步骤 3/5：killall adbd");
+                at.Send("AT+SHELL=killall adbd 2>/dev/null", 700);
+                LogService.Instance.Info("ADBRepair", "执行启动步骤 4/5：启动 " + targetAdbd);
+                at.Send("AT+SHELL=" + targetAdbd, 1200);
+                LogService.Instance.Info("ADBRepair", "执行启动步骤 5/5：写入 adb_enable=1");
+                at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/adb_enable", 700);
             }
             SetAdbRepairStatus(reportStatus, "正在等待 ADB 设备上线…");
-            // adbd 启动后 USB gadget 可能需要重新枚举；重启本工具自己的 adb server，避免复用旧 transport。
-            try { await adbService.RestartAdbServerAsync(token); } catch { }
             for (var attempt = 0; attempt < 30; attempt++)
             {
                 token.ThrowIfCancellationRequested();
@@ -1110,18 +1112,6 @@ namespace WiFitool
         {
             StatusText.Text = message;
             if (reportStatus != null) reportStatus(message);
-        }
-
-        private async Task<bool> WaitForAdbOnlineAsync(CancellationToken token, int attempts, int delayMilliseconds)
-        {
-            for (var attempt = 0; attempt < attempts; attempt++)
-            {
-                token.ThrowIfCancellationRequested();
-                await CheckAdbStatusAsync();
-                if (adbStatus != null && adbStatus.DeviceState == "online") return true;
-                if (attempt + 1 < attempts) await Task.Delay(delayMilliseconds, token);
-            }
-            return false;
         }
 
         private static bool IsRootPartitionWritable(string mounts)

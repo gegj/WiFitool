@@ -70,11 +70,6 @@ namespace WiFitool.Services
             return new AdbStatusInfo { PortConnected = true, DeviceState = "online", Serial = selected.Serial, TransportId = selected.TransportId, DeviceType = deviceType, SoftwareVersion = version, RootFsMode = rootFsMode, UserdataFsMode = userdataFsMode, System = spaces.FirstOrDefault(x => x.Mount == "/system") ?? spaces.FirstOrDefault(x => x.Mount == "/"), Userdata = userdata };
         }
 
-        public async Task RestartAdbServerAsync(CancellationToken token)
-        {
-            await runner.RunAsync(adbPath, new[] { "kill-server" }, adbDirectory, token, null);
-            await runner.RunAsync(adbPath, new[] { "start-server" }, adbDirectory, token, null);
-        }
         public async Task RebootAsync(string serial, CancellationToken token)
         {
             ValidateSerial(serial);
