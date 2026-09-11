@@ -1034,33 +1034,31 @@ namespace WiFitool
                     LogService.Instance.Info("ADBRepair", "尝试兼容命令：" + compatibilityCommand);
                     at.Send(compatibilityCommand, 1000);
                     await Task.Delay(1800, token);
-                    await CheckAdbStatusAsync();
-                    if (adbStatus != null && adbStatus.DeviceState == "online")
+                    if (await WaitForAdbOnlineAsync(token, 2, 400))
                     {
                         LogService.Instance.Info("ADBRepair", "兼容命令已使 ADB 在线");
                         SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                         return;
                     }
                 }
-                // 轻量探测设备已有的 adbd，存在且可执行时直接启动，避免重复上传。
+                // 只优先尝试系统正式目录中的 adbd，避免重复上传设备已经具备的文件。
                 SetAdbRepairStatus(reportStatus, "正在检查设备已有 adbd…");
-                LogService.Instance.Info("ADBRepair", "尝试启动设备已有 /bin/adbd");
-                at.Send("AT+SHELL=/bin/adbd &", 1000);
-                await Task.Delay(1200, token);
-                await CheckAdbStatusAsync();
-                if (adbStatus != null && adbStatus.DeviceState == "online")
+                LogService.Instance.Info("ADBRepair", "检查并尝试启动设备已有 /bin/adbd");
+                at.Send("AT+SHELL=if [ -f /bin/adbd ]; then /bin/adbd &; fi", 1000);
+                if (await WaitForAdbOnlineAsync(token, 6, 500))
                 {
                     LogService.Instance.Info("ADBRepair", "设备已有 /bin/adbd 已使 ADB 在线");
                     SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                     return;
                 }
-                LogService.Instance.Info("ADBRepair", "尝试启动设备已有 /mnt/userdata/etc_rw/nv/adbd");
-                at.Send("AT+SHELL=/mnt/userdata/etc_rw/nv/adbd &", 1000);
-                await Task.Delay(1200, token);
+                var mounts = at.Send("AT+SHELL=cat /proc/mounts", 900);
+                var rootWritable = IsRootPartitionWritable(mounts);
+                var targetAdbd = rootWritable ? "/bin/adbd" : "/mnt/userdata/etc_rw/nv/adbd";
+                LogService.Instance.Info("ADBRepair", "根分区状态 " + (rootWritable ? "rw" : "ro") + "，上传目标 " + targetAdbd);
                 await CheckAdbStatusAsync();
                 if (adbStatus != null && adbStatus.DeviceState == "online")
                 {
-                    LogService.Instance.Info("ADBRepair", "设备已有 nv/adbd 已使 ADB 在线");
+                    LogService.Instance.Info("ADBRepair", "设备已在上传前上线，取消后续 TFTP 操作");
                     SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                     return;
                 }
@@ -1071,18 +1069,21 @@ namespace WiFitool
                     try { server.Start(); }
                     catch (System.Net.Sockets.SocketException ex) { throw new InvalidOperationException("UDP 69 端口被占用或无法监听：" + ex.Message); }
                     SetAdbRepairStatus(reportStatus, "正在等待设备下载 adbd…");
-                    LogService.Instance.Info("ADBRepair", "等待设备通过 TFTP 下载 adbd");
-                    // 将内置 adbd 下载到可写的 nv 目录。
-                    at.Send("AT+SHELL=rm -f /mnt/userdata/etc_rw/nv/adbd", 700);
-                    var download = at.Send("AT+SHELL=tftp -l /mnt/userdata/etc_rw/nv/adbd -r adbd -g " + options.LocalIp, 1500);
+                    LogService.Instance.Info("ADBRepair", "等待设备通过 TFTP 下载 adbd 到 " + targetAdbd);
+                    var download = at.Send("AT+SHELL=tftp -l " + targetAdbd + " -r adbd -g " + options.LocalIp, 1500);
                     var completed = await Task.WhenAny(server.Downloaded, Task.Delay(20000, token));
                     token.ThrowIfCancellationRequested();
                     if (completed != server.Downloaded)
                         throw new InvalidOperationException("设备未请求 adbd 文件，请确认本机 IP、UDP 69 端口和 TFTP 服务。设备返回：" + download.Trim());
                 }
                 SetAdbRepairStatus(reportStatus, "正在启动 adbd…");
-                LogService.Instance.Info("ADBRepair", "TFTP 下载完成，启动设备端 adbd");
-                var startCommand = "chmod 777 /mnt/userdata/etc_rw/nv/adbd; sync; killall adbd 2>/dev/null; /mnt/userdata/etc_rw/nv/adbd &";
+                LogService.Instance.Info("ADBRepair", "TFTP 下载完成，启动设备端 " + targetAdbd);
+                if (rootWritable)
+                {
+                    LogService.Instance.Info("ADBRepair", "确保 /etc/rc 中存在 adbd & 启动项");
+                    at.Send("AT+SHELL=grep -q \"adbd &\" /etc/rc 2>/dev/null || echo adbd\\ \\& >> /etc/rc", 900);
+                }
+                var startCommand = "chmod 777 " + targetAdbd + "; sync; killall adbd 2>/dev/null; " + targetAdbd + " &";
                 at.Send("AT+SHELL=" + startCommand, 1500);
             }
             SetAdbRepairStatus(reportStatus, "正在等待 ADB 设备上线…");
@@ -1109,6 +1110,30 @@ namespace WiFitool
         {
             StatusText.Text = message;
             if (reportStatus != null) reportStatus(message);
+        }
+
+        private async Task<bool> WaitForAdbOnlineAsync(CancellationToken token, int attempts, int delayMilliseconds)
+        {
+            for (var attempt = 0; attempt < attempts; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                await CheckAdbStatusAsync();
+                if (adbStatus != null && adbStatus.DeviceState == "online") return true;
+                if (attempt + 1 < attempts) await Task.Delay(delayMilliseconds, token);
+            }
+            return false;
+        }
+
+        private static bool IsRootPartitionWritable(string mounts)
+        {
+            var writable = false;
+            foreach (var line in (mounts ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = line.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 4 || parts[1] != "/" || parts[0] == "rootfs") continue;
+                writable = parts[3].Split(',').Any(option => string.Equals(option, "rw", StringComparison.OrdinalIgnoreCase));
+            }
+            return writable;
         }
 
         private static string GetPreferredLocalIp()

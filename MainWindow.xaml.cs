@@ -48,7 +48,7 @@ namespace WiFitool
         private string adbSerial;
         private AdbStatusInfo adbStatus = new AdbStatusInfo();
         private CancellationTokenSource activeCancellation;
-        private bool adbChecking;
+        private readonly SemaphoreSlim adbStatusGate = new SemaphoreSlim(1, 1);
         private CancellationTokenSource terminalCancellation;
         private bool terminalExecuting;
         private readonly List<string> terminalHistory = new List<string>();
@@ -1702,8 +1702,7 @@ namespace WiFitool
 
         private async Task CheckAdbStatusAsync(bool showProgress = false)
         {
-            if (adbChecking) return;
-            adbChecking = true;
+            await adbStatusGate.WaitAsync();
             if (showProgress) BeginTaskProgress();
             try
             {
@@ -1748,7 +1747,7 @@ namespace WiFitool
                 if (state.DeviceState == "online" && FilesView.Visibility == Visibility.Visible && !adbMode && string.IsNullOrEmpty(currentRoot)) await ActivateAdbSourceAsync(false);
             }
             catch (Exception ex) { logService.Warn("ADB", "ADB 状态检测失败", ex); ClearProcessCache(); ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; AdbStatusText.Text = "ADB 检测失败：" + ex.Message; AdbExportButton.IsEnabled = false; RefreshProcessButton.IsEnabled = false; UpdateTerminalState(); }
-            finally { if (showProgress) EndTaskProgress(); adbChecking = false; }
+            finally { if (showProgress) EndTaskProgress(); adbStatusGate.Release(); }
         }
 
         private void UpdateAdbDetails(AdbStatusInfo state)
