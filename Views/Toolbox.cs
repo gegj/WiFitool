@@ -307,32 +307,54 @@ namespace WiFitool
                         ? new[] { "/reqproc/proc_post?goformId=SET_DEVICE_MODE&debug_enable=1", "/goform/goform_set_cmd_process?goformId=SET_DEVICE_MODE&debug_enable=1", "/reqproc/proc_post?isTest=false&goformId=tw_telnet_config&telnetd_enable=1&debug_enable=1", "/goform/goform_set_cmd_process?isTest=false&goformId=tw_telnet_config&telnetd_enable=1&debug_enable=1" }
                         : new[] { "/reqproc/proc_post?goformId=SET_DEVICE_MODE&debug_enable=0", "/goform/goform_set_cmd_process?goformId=SET_DEVICE_MODE&debug_enable=0" };
                     var successPath = (string)null;
-                    foreach (var path in paths)
+                    if (enableAdb)
+                    {
+                        foreach (var path in paths)
+                        {
+                            try
+                            {
+                                LogService.Instance.Debug("ADBSettings", "尝试设备接口：" + path);
+                                if (await SendRawHttpGetAsync(address.ToString(), path, token, "success"))
+                                {
+                                    successPath = path;
+                                    break;
+                                }
+                            }
+                            catch (Exception ex) { LogService.Instance.Debug("ADBSettings", "设备接口请求失败：" + path, ex); }
+                        }
+                        if (successPath == null)
+                        {
+                            throw new InvalidOperationException("设备未接受开启 ADB 请求，请确认 IP 和网络连接。\n可尝试在浏览器打开设备管理页面后重试。");
+                        }
+                        LogService.Instance.Info("ADBSettings", "设备接口执行成功：" + successPath);
+                    }
+                    else
+                    {
+                        foreach (var path in paths)
+                        {
+                            try
+                            {
+                                LogService.Instance.Debug("ADBSettings", "发送关闭 ADB 接口：" + path);
+                                await SendRawHttpGetAsync(address.ToString(), path, token, null);
+                            }
+                            catch (Exception ex) { LogService.Instance.Warn("ADBSettings", "关闭 ADB 接口请求失败：" + path, ex); }
+                        }
+                        LogService.Instance.Info("ADBSettings", "已发送两个关闭 ADB 接口，不判断响应正文");
+                    }
+
+                    var rebootPaths = enableAdb && successPath.StartsWith("/reqproc", StringComparison.OrdinalIgnoreCase)
+                        ? new[] { "/reqproc/proc_post?isTest=false&goformId=REBOOT_DEVICE", "/goform/goform_set_cmd_process?goformId=REBOOT_DEVICE" }
+                        : new[] { "/goform/goform_set_cmd_process?goformId=REBOOT_DEVICE", "/reqproc/proc_post?isTest=false&goformId=REBOOT_DEVICE" };
+                    foreach (var rebootPath in rebootPaths)
                     {
                         try
                         {
-                            LogService.Instance.Debug("ADBSettings", "尝试设备接口：" + path);
-                            if (await SendRawHttpGetAsync(address.ToString(), path, token, enableAdb ? "success" : "successfully"))
-                            {
-                                successPath = path;
-                                break;
-                            }
+                            LogService.Instance.Debug("ADBSettings", "请求设备重启：" + rebootPath);
+                            await SendRawHttpGetAsync(address.ToString(), rebootPath, token, null);
+                            LogService.Instance.Info("ADBSettings", "已发送设备重启接口：" + rebootPath);
                         }
-                        catch (Exception ex) { LogService.Instance.Debug("ADBSettings", "设备接口请求失败：" + path, ex); }
+                        catch (Exception ex) { LogService.Instance.Warn("ADBSettings", "设备重启接口请求失败：" + rebootPath, ex); }
                     }
-                    if (successPath == null)
-                    {
-                        throw new InvalidOperationException(enableAdb
-                            ? "设备未接受开启 ADB 请求，请确认 IP 和网络连接。\n可尝试在浏览器打开设备管理页面后重试。"
-                            : "设备未接受关闭 ADB 请求，请确认 IP 和网络连接。\n已尝试两种设备接口。");
-                    }
-                    LogService.Instance.Info("ADBSettings", "设备接口执行成功：" + successPath);
-
-                    var rebootPath = successPath.StartsWith("/reqproc", StringComparison.OrdinalIgnoreCase)
-                        ? "/reqproc/proc_post?isTest=false&goformId=REBOOT_DEVICE"
-                        : "/goform/goform_set_cmd_process?isTest=false&goformId=REBOOT_DEVICE";
-                    try { LogService.Instance.Debug("ADBSettings", "请求设备重启：" + rebootPath); await SendRawHttpGetAsync(address.ToString(), rebootPath, token); }
-                    catch (Exception ex) { LogService.Instance.Warn("ADBSettings", "设备重启请求失败", ex); }
                     SetAdbSettingsStatus(state, (enableAdb ? "开启" : "关闭") + "请求已成功，设备正在重启…");
                     await Task.Delay(5000, token);
                 }, message => state.Text = message, delegate(Exception ex) { state.Text = "操作失败：" + ex.Message; });
@@ -802,8 +824,10 @@ namespace WiFitool
                     using (var reader = new StreamReader(stream, System.Text.Encoding.ASCII))
                     {
                         var response = await reader.ReadToEndAsync();
-                        var success = response.IndexOf(successMarker, StringComparison.OrdinalIgnoreCase) >= 0;
-                        LogService.Instance.Debug("HTTP", "设备接口响应结果：" + success + "，匹配标记 " + successMarker);
+                        var success = string.IsNullOrEmpty(successMarker) || response.IndexOf(successMarker, StringComparison.OrdinalIgnoreCase) >= 0;
+                        LogService.Instance.Debug("HTTP", string.IsNullOrEmpty(successMarker)
+                            ? "设备接口请求已完成，不判断响应正文"
+                            : "设备接口响应结果：" + success + "，匹配标记 " + successMarker);
                         return success;
                     }
                 }
