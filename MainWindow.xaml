@@ -400,6 +400,16 @@
           <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
             <TextBlock x:Name="EnvironmentText" Text="工具环境：检查中" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
             <Border Width="1" Height="16" Background="{DynamicResource BorderBrush}" Margin="12,0" />
+            <TextBlock Text="日志" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox x:Name="LogLevelComboBox" Width="82" Height="28" SelectedIndex="0" SelectionChanged="LogLevelComboBox_SelectionChanged" ToolTip="选择运行日志级别">
+              <ComboBoxItem Content="关闭日志" Tag="Off" />
+              <ComboBoxItem Content="Info" Tag="Info" />
+              <ComboBoxItem Content="Warn" Tag="Warn" />
+              <ComboBoxItem Content="Error" Tag="Error" />
+              <ComboBoxItem Content="Debug" Tag="Debug" />
+            </ComboBox>
+            <Button x:Name="ClearLogButton" Content="清空日志" Click="ClearLogButton_Click" Style="{StaticResource QuietButton}" Height="28" Padding="8,2" Margin="4,0,0,0" ToolTip="清空已保存的运行日志" />
+            <Border Width="1" Height="16" Background="{DynamicResource BorderBrush}" Margin="12,0" />
             <Button x:Name="CheckUpdateButton" Content="检查更新" Click="CheckUpdateButton_Click" Style="{StaticResource QuietButton}" Height="28" Padding="8,2" Margin="0" ToolTip="检查最新版本" />
           </StackPanel>
         </Grid>

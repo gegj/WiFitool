@@ -51,24 +51,38 @@ namespace WiFitool.Services
         {
             foreach (var relative in requiredFiles)
             {
-                if (!File.Exists(Path.Combine(Root, relative))) return false;
+                if (!File.Exists(Path.Combine(Root, relative)))
+                {
+                    LogService.Instance.Debug("ToolEnvironment", "缺少工具文件：" + relative);
+                    return false;
+                }
             }
             return true;
         }
 
         public static async Task EnsureReadyAsync(IProgress<int> progress = null)
         {
-            if (IsReady()) return;
+            if (IsReady()) { LogService.Instance.Debug("ToolEnvironment", "工具环境检查通过"); return; }
             var lastError = "";
             foreach (var url in new[] { PrimaryDownloadUrl, FallbackDownloadUrl })
             {
                 try
                 {
+                    LogService.Instance.Info("ToolEnvironment", "尝试下载工具包：" + url);
                     await DownloadAndExtractAsync(url, progress);
-                    if (IsReady()) return;
+                    if (IsReady())
+                    {
+                        LogService.Instance.Info("ToolEnvironment", "工具包下载并校验完成：" + url);
+                        return;
+                    }
                 }
-                catch (Exception ex) { lastError = ex.Message; }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    LogService.Instance.Warn("ToolEnvironment", "工具包地址失败：" + url, ex);
+                }
             }
+            LogService.Instance.Error("ToolEnvironment", "所有工具包下载地址均失败");
             throw new InvalidOperationException("工具下载失败：" + (string.IsNullOrEmpty(lastError) ? "无法连接下载地址" : lastError));
         }
 
@@ -81,6 +95,7 @@ namespace WiFitool.Services
             try
             {
                 if (progress != null) progress.Report(0);
+                LogService.Instance.Debug("ToolEnvironment", "开始下载工具包：" + url);
                 using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
                 {
                     response.EnsureSuccessStatusCode();
@@ -100,13 +115,16 @@ namespace WiFitool.Services
                     }
                 }
                 if (progress != null) progress.Report(100);
-                if (!VerifyPackageHash(zipPath)) throw new InvalidOperationException("工具包校验失败，已拒绝使用该文件。");
+                var verified = VerifyPackageHash(zipPath);
+                LogService.Instance.Debug("ToolEnvironment", "工具包 SHA-256 校验结果：" + verified);
+                if (!verified) throw new InvalidOperationException("工具包校验失败，已拒绝使用该文件。");
                 ZipFile.ExtractToDirectory(zipPath, extractDir);
                 var nested = Path.Combine(extractDir, "tools");
                 var sourceDir = Directory.Exists(nested) ? nested : extractDir;
                 if (Directory.Exists(Root)) TryDeleteDirectory(Root);
                 Directory.Move(sourceDir, Root);
                 if (!IsReady()) throw new InvalidOperationException("工具包内容不完整。");
+                LogService.Instance.Debug("ToolEnvironment", "工具包已解压到：" + Root);
             }
             finally
             {

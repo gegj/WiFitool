@@ -13,9 +13,9 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <StartupObject>WiFitool.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.45.4</Version>
-    <FileVersion>0.45.4.0</FileVersion>
-    <AssemblyVersion>0.45.4.0</AssemblyVersion>
+    <Version>0.47.0</Version>
+    <FileVersion>0.47.0.0</FileVersion>
+    <AssemblyVersion>0.47.0.0</AssemblyVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GeneratedAssemblyInfoFile>$(IntermediateOutputPath)GeneratedAssemblyInfo.cs</GeneratedAssemblyInfoFile>
   </PropertyGroup>

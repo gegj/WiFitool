@@ -23,15 +23,19 @@ namespace WiFitool.Services
     internal sealed class AtPortConnection : IDisposable
     {
         private readonly SerialPort port;
+        private readonly string portName;
 
-        internal AtPortConnection(SerialPort port) { this.port = port; }
+        internal AtPortConnection(SerialPort port, string portName) { this.port = port; this.portName = portName; }
 
         public string Send(string command, int waitMilliseconds = 800)
         {
+            LogService.Instance.Debug("AT", portName + " -> " + command + "，等待 " + waitMilliseconds + " ms");
             port.DiscardInBuffer();
             port.Write(command + "\r\n");
             Thread.Sleep(waitMilliseconds);
-            return port.BytesToRead > 0 ? port.ReadExisting() : "";
+            var response = port.BytesToRead > 0 ? port.ReadExisting() : "";
+            LogService.Instance.Debug("AT", portName + " <- " + response);
+            return response;
         }
 
         public void Dispose()
@@ -45,6 +49,7 @@ namespace WiFitool.Services
     {
         public static async Task<string> DetectDeviceNetworkAsync(string portName, CancellationToken token)
         {
+            LogService.Instance.Info("AT", "开始读取设备网络：" + portName);
             using (var receiver = new TftpRouteReceiver())
             {
                 receiver.Start();
@@ -62,7 +67,9 @@ namespace WiFitool.Services
                 }, token);
                 var completed = await Task.WhenAny(receiver.Received, Task.Delay(5000, token));
                 token.ThrowIfCancellationRequested();
-                return completed == receiver.Received ? ParseNetwork(await receiver.Received) : "";
+                var network = completed == receiver.Received ? ParseNetwork(await receiver.Received) : "";
+                LogService.Instance.Info("AT", "设备网络读取结果：" + (string.IsNullOrWhiteSpace(network) ? "未识别" : network));
+                return network;
             }
         }
 
@@ -90,6 +97,7 @@ namespace WiFitool.Services
             return Task.Run(() =>
             {
                 var available = GetAvailablePorts();
+                LogService.Instance.Debug("AT", "可用串口：" + string.Join(", ", available.Select(x => x.PortName)));
                 var namedAtPorts = available.Where(port => port.IsNamedAtPort).ToList();
                 var candidates = namedAtPorts.Count > 0 ? namedAtPorts : available;
                 var detected = new List<string>();
@@ -106,6 +114,7 @@ namespace WiFitool.Services
                     }
                     catch { }
                 }
+                LogService.Instance.Info("AT", "识别到 AT 端口：" + (detected.Count == 0 ? "无" : string.Join(", ", detected)));
                 return detected;
             }, token);
         }
@@ -127,6 +136,7 @@ namespace WiFitool.Services
         public static AtPortConnection Open(string portName)
         {
             if (string.IsNullOrWhiteSpace(portName) || !SerialPort.GetPortNames().Any(x => string.Equals(x, portName, StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("AT 端口不可用：" + portName);
+            LogService.Instance.Info("AT", "打开 AT 端口：" + portName);
             var port = new SerialPort(portName, 115200, Parity.None, 8, StopBits.One)
             {
                 Handshake = Handshake.None,
@@ -135,7 +145,7 @@ namespace WiFitool.Services
                 ReadTimeout = 1000,
                 WriteTimeout = 1000
             };
-            try { port.Open(); return new AtPortConnection(port); }
+            try { port.Open(); return new AtPortConnection(port, portName); }
             catch { port.Dispose(); throw; }
         }
 

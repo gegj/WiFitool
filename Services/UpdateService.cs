@@ -24,12 +24,14 @@ namespace WiFitool.Services
             try
             {
                 var cachePath = GetCachePath();
-                if (!File.Exists(cachePath)) return true;
+                if (!File.Exists(cachePath)) { LogService.Instance.Debug("Update", "未找到自动更新检查缓存"); return true; }
                 long ticks;
-                if (!long.TryParse(File.ReadAllText(cachePath), out ticks)) return true;
-                return DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) >= TimeSpan.FromMinutes(10);
+                if (!long.TryParse(File.ReadAllText(cachePath), out ticks)) { LogService.Instance.Warn("Update", "自动更新检查缓存无效"); return true; }
+                var due = DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) >= TimeSpan.FromMinutes(10);
+                LogService.Instance.Debug("Update", "自动更新检查是否到期：" + due);
+                return due;
             }
-            catch { return true; }
+            catch (Exception ex) { LogService.Instance.Warn("Update", "读取自动更新检查缓存失败", ex); return true; }
         }
 
         public void MarkCheckCompleted()
@@ -39,25 +41,36 @@ namespace WiFitool.Services
                 var cachePath = GetCachePath();
                 Directory.CreateDirectory(Path.GetDirectoryName(cachePath));
                 File.WriteAllText(cachePath, DateTime.UtcNow.Ticks.ToString());
+                LogService.Instance.Debug("Update", "已记录更新检查时间");
             }
-            catch { }
+            catch (Exception ex) { LogService.Instance.Warn("Update", "记录更新检查时间失败", ex); }
         }
 
         public async Task<UpdateCheckResult> CheckForUpdateAsync(Version currentVersion)
         {
             try
             {
+                LogService.Instance.Info("Update", "请求最新版本信息，当前版本 " + currentVersion);
                 var json = await client.GetStringAsync(LatestReleaseApiUrl);
                 var release = ReadRelease(json);
                 SemanticVersion remoteVersion;
-                if (release == null || !SemanticVersion.TryParse(release.TagName, out remoteVersion)) return UpdateCheckResult.Failed("最新版本信息格式无效。");
+                if (release == null || !SemanticVersion.TryParse(release.TagName, out remoteVersion))
+                {
+                    LogService.Instance.Warn("Update", "最新版本信息格式无效");
+                    return UpdateCheckResult.Failed("最新版本信息格式无效。");
+                }
 
                 var localVersion = SemanticVersion.FromAssemblyVersion(currentVersion);
-                if (remoteVersion.CompareTo(localVersion) <= 0) return UpdateCheckResult.NoUpdate();
+                if (remoteVersion.CompareTo(localVersion) <= 0) { LogService.Instance.Info("Update", "没有可用更新"); return UpdateCheckResult.NoUpdate(); }
 
                 var asset = release.Assets == null ? null : release.Assets.FirstOrDefault(x => string.Equals(x.Name, UpdateAssetName, StringComparison.OrdinalIgnoreCase));
-                if (asset == null || string.IsNullOrWhiteSpace(asset.DownloadUrl)) return UpdateCheckResult.Failed("最新版本缺少更新文件。");
+                if (asset == null || string.IsNullOrWhiteSpace(asset.DownloadUrl))
+                {
+                    LogService.Instance.Warn("Update", "最新版本缺少更新文件");
+                    return UpdateCheckResult.Failed("最新版本缺少更新文件。");
+                }
 
+                LogService.Instance.Info("Update", "发现可用更新 " + remoteVersion);
                 return UpdateCheckResult.Available(new UpdateInfo
                 {
                     Version = remoteVersion.ToString(),
@@ -65,7 +78,7 @@ namespace WiFitool.Services
                     Notes = release.Body ?? ""
                 });
             }
-            catch (Exception ex) { return UpdateCheckResult.Failed("无法连接更新服务：" + ex.Message); }
+            catch (Exception ex) { LogService.Instance.Warn("Update", "检查更新失败", ex); return UpdateCheckResult.Failed("无法连接更新服务：" + ex.Message); }
         }
 
         public async Task<string> DownloadUpdateAsync(UpdateInfo update, IProgress<int> progress)
@@ -76,6 +89,7 @@ namespace WiFitool.Services
             var downloadPath = Path.Combine(folder, "WiFitool-" + Guid.NewGuid().ToString("N") + ".exe");
             try
             {
+                LogService.Instance.Info("Update", "开始下载更新 " + update.Version);
                 using (var response = await client.GetAsync(update.DownloadUrl, HttpCompletionOption.ResponseHeadersRead))
                 {
                     response.EnsureSuccessStatusCode();
@@ -96,10 +110,12 @@ namespace WiFitool.Services
                 }
                 File.Move(temporaryPath, downloadPath);
                 if (progress != null) progress.Report(100);
+                LogService.Instance.Info("Update", "更新下载完成：" + downloadPath);
                 return downloadPath;
             }
-            catch
+            catch (Exception ex)
             {
+                LogService.Instance.Warn("Update", "更新下载失败", ex);
                 try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
                 throw;
             }
@@ -116,6 +132,7 @@ namespace WiFitool.Services
                 var backupPath = targetPath + ".wifitool-backup-" + Guid.NewGuid().ToString("N");
                 File.WriteAllText(scriptPath, CreateUpdateScript(current.Id, targetPath, downloadedPath, backupPath), Encoding.GetEncoding(936));
                 Process.Start(new ProcessStartInfo { FileName = scriptPath, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden });
+                LogService.Instance.Info("Update", "已启动更新替换脚本，目标 " + targetPath);
             }
         }
 

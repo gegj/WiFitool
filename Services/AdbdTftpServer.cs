@@ -26,12 +26,14 @@ namespace WiFitool.Services
             if (!File.Exists(filePath)) throw new FileNotFoundException("缺少内置 adbd 文件。", filePath);
             this.address = address;
             file = File.ReadAllBytes(filePath);
+            LogService.Instance.Info("TFTP", "已加载 adbd 文件，大小 " + file.Length + " 字节，本机地址 " + address);
         }
 
         public void Start()
         {
             // 监听所有本机地址，避免设备请求到网卡地址时被绑定范围限制。
             listener = new UdpClient(new IPEndPoint(IPAddress.Any, 69));
+            LogService.Instance.Info("TFTP", "临时 TFTP 服务已启动，监听 UDP 69");
             _ = ListenAsync();
         }
 
@@ -45,16 +47,20 @@ namespace WiFitool.Services
                 catch (SocketException)
                 {
                     if (cancellation.IsCancellationRequested) break;
+                    LogService.Instance.Warn("TFTP", "监听 UDP 69 时发生 Socket 异常");
                     continue;
                 }
 
                 Dictionary<string, string> options;
                 if (!TryParseReadRequest(request.Buffer, out options))
                 {
+                    LogService.Instance.Debug("TFTP", "忽略无效或非读取请求，来源 " + request.RemoteEndPoint);
                     continue;
                 }
+                LogService.Instance.Info("TFTP", "收到 adbd 读取请求，来源 " + request.RemoteEndPoint + "，选项 " + FormatOptions(options));
                 _ = Task.Run(() => TransferAsync(request.RemoteEndPoint, options));
             }
+            LogService.Instance.Debug("TFTP", "临时 TFTP 监听循环已结束");
         }
 
         private static bool TryParseReadRequest(byte[] request, out Dictionary<string, string> options)
@@ -86,12 +92,15 @@ namespace WiFitool.Services
                     transfer.Connect(remote);
                     var blockSize = GetBlockSize(options);
                     var timeoutMilliseconds = GetTimeoutMilliseconds(options);
+                    LogService.Instance.Debug("TFTP", "开始传输 adbd，目标 " + remote + "，块大小 " + blockSize + "，超时 " + timeoutMilliseconds + " ms");
 
                     var optionPacket = BuildOptionPacket(options, blockSize);
                     if (optionPacket != null)
                     {
+                        LogService.Instance.Debug("TFTP", "发送 TFTP 选项确认包，目标 " + remote);
                         if (!await SendAndWaitForAckAsync(transfer, optionPacket, 0, timeoutMilliseconds))
                         {
+                            LogService.Instance.Warn("TFTP", "TFTP 选项确认超时，目标 " + remote);
                             return;
                         }
                     }
@@ -108,27 +117,30 @@ namespace WiFitool.Services
                         if (size > 0) Buffer.BlockCopy(file, offset, packet, 4, size);
                         if (!await SendAndWaitForAckAsync(transfer, packet, block, timeoutMilliseconds))
                         {
+                            LogService.Instance.Warn("TFTP", "数据块 " + block + " 未收到确认，目标 " + remote);
                             return;
                         }
                         offset += size;
                         if (size < blockSize)
                         {
                             downloaded.TrySetResult(true);
+                            LogService.Instance.Info("TFTP", "adbd 传输完成，目标 " + remote + "，总大小 " + file.Length + " 字节");
                             return;
                         }
                         block = (block + 1) & 0xffff;
                     }
                 }
             }
-            catch (OperationCanceledException) { }
-            catch (SocketException) { }
-            catch (Exception) { }
+            catch (OperationCanceledException) { LogService.Instance.Debug("TFTP", "adbd 传输被取消，目标 " + remote); }
+            catch (SocketException ex) { LogService.Instance.Warn("TFTP", "adbd 传输 Socket 失败，目标 " + remote, ex); }
+            catch (Exception ex) { LogService.Instance.Error("TFTP", "adbd 传输失败，目标 " + remote, ex); }
         }
 
         private async Task<bool> SendAndWaitForAckAsync(UdpClient transfer, byte[] packet, int expectedBlock, int timeoutMilliseconds)
         {
             for (var attempt = 1; attempt <= 4 && !cancellation.IsCancellationRequested; attempt++)
             {
+                LogService.Instance.Debug("TFTP", "发送数据包，块 " + expectedBlock + "，第 " + attempt + " 次尝试");
                 await transfer.SendAsync(packet, packet.Length);
                 transfer.Client.ReceiveTimeout = timeoutMilliseconds;
                 try
@@ -139,9 +151,18 @@ namespace WiFitool.Services
                 }
                 catch (SocketException ex) when (ex.SocketErrorCode == SocketError.TimedOut)
                 {
+                    LogService.Instance.Debug("TFTP", "等待块 " + expectedBlock + " 确认超时，第 " + attempt + " 次尝试");
                 }
             }
             return false;
+        }
+
+        private static string FormatOptions(Dictionary<string, string> options)
+        {
+            if (options == null || options.Count == 0) return "无";
+            var values = new List<string>();
+            foreach (var item in options) values.Add(item.Key + "=" + item.Value);
+            return string.Join(", ", values);
         }
 
         private static int GetBlockSize(Dictionary<string, string> options)
@@ -185,6 +206,7 @@ namespace WiFitool.Services
             cancellation.Cancel();
             try { if (listener != null) listener.Close(); } catch { }
             cancellation.Dispose();
+            LogService.Instance.Debug("TFTP", "临时 TFTP 服务已停止");
         }
     }
 }

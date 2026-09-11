@@ -40,7 +40,7 @@ namespace WiFitool
         private void InitializeToolbox()
         {
             toolboxItems.AddRange(new[] {
-                new ToolboxItem { Name = "开启 ADB", Description = "通过设备 Web 接口开启调试模式", Type = "builtin", BuiltinId = "adb-enable", Icon = "⌁" },
+                new ToolboxItem { Name = "设置 ADB", Description = "通过设备 Web 接口开启或关闭调试模式", Type = "builtin", BuiltinId = "adb-settings", Icon = "⌁" },
                 new ToolboxItem { Name = "ADB离线修复", Description = "自动通过 AT 端口恢复离线 ADB", Type = "builtin", BuiltinId = "adb-repair", Icon = "⌁" },
                 new ToolboxItem { Name = "修复无限重启", Description = "在设备重启间隙覆盖或删除设备文件", Type = "builtin", BuiltinId = "infinite-reboot-repair", Icon = "⌁" }
             });
@@ -244,7 +244,7 @@ namespace WiFitool
                     case "process": ProcessNav_Click(this, new RoutedEventArgs()); break;
                     case "terminal": AdbTerminalNav_Click(this, new RoutedEventArgs()); break;
                     case "adb-repair": OpenAdbRepair(); break;
-                    case "adb-enable": OpenAdbEnable(); break;
+                    case "adb-settings": OpenAdbSettings(); break;
                     case "infinite-reboot-repair": ShowInfiniteRebootRepairDialog(); break;
                 }
                 return;
@@ -263,40 +263,87 @@ namespace WiFitool
         private async void OpenAdbRepair()
         {
             if (activeCancellation != null) { StatusText.Text = "请等待当前操作完成"; return; }
+            LogService.Instance.Info("ADBRepair", "打开 ADB 离线修复");
             await CheckAdbStatusAsync();
             if (adbStatus == null || adbStatus.DeviceState != "offline")
             {
                 var message = adbStatus != null && adbStatus.DeviceState == "online" ? "当前 ADB 已在线，无需修复。" : "未检测到 ADB 离线设备，请先连接设备并确认右上角状态为“ADB 设备离线”。";
                 StatusText.Text = message;
+                LogService.Instance.Warn("ADBRepair", message);
                 MessageBox.Show(this, message, "ADB离线修复", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             ShowAdbRepairDialog();
         }
 
-        private async void OpenAdbEnable()
+        private void OpenAdbSettings()
         {
-            await CheckAdbStatusAsync();
-            if (adbStatus != null && adbStatus.DeviceState == "online") { StatusText.Text = "ADB 已在线，无需开启。"; MessageBox.Show(this, "当前 ADB 已在线，无需重复开启。", "开启 ADB", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            var ip = ShowAdbEnableDialog();
-            if (string.IsNullOrWhiteSpace(ip)) return;
+            if (activeCancellation != null) { StatusText.Text = "请等待当前操作完成"; return; }
+            ShowAdbSettingsDialog();
+        }
+
+        private async Task RunAdbSettingsActionAsync(TextBox ip, TextBlock state, Button enableButton, Button disableButton, Button closeButton, bool enableAdb)
+        {
+            if (activeCancellation != null) { SetAdbSettingsStatus(state, "请等待当前操作完成。"); return; }
+
             IPAddress address;
-            if (!IPAddress.TryParse(ip, out address)) { MessageBox.Show(this, "请输入有效的设备 IPv4 地址。", "开启 ADB", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            await RunBusyAsync("正在开启 ADB…", async token =>
+            var value = ip.Text.Trim();
+            if (!IPAddress.TryParse(value, out address) || address.AddressFamily != AddressFamily.InterNetwork)
             {
-                var urls = new[] { "/reqproc/proc_post?goformId=SET_DEVICE_MODE&debug_enable=1", "/goform/goform_set_cmd_process?goformId=SET_DEVICE_MODE&debug_enable=1", "/reqproc/proc_post?isTest=false&goformId=tw_telnet_config&telnetd_enable=1&debug_enable=1", "/goform/goform_set_cmd_process?isTest=false&goformId=tw_telnet_config&telnetd_enable=1&debug_enable=1" };
-                var success = false;
-                foreach (var path in urls)
+                SetAdbSettingsStatus(state, "请输入有效的设备 IPv4 地址。");
+                return;
+            }
+
+            enableButton.IsEnabled = false;
+            disableButton.IsEnabled = false;
+            closeButton.IsEnabled = false;
+            ip.IsEnabled = false;
+            try
+            {
+                LogService.Instance.Info("ADBSettings", (enableAdb ? "开启" : "关闭") + " ADB，设备地址 " + address);
+                await RunBusyAsync(enableAdb ? "正在开启 ADB…" : "正在关闭 ADB…", async token =>
                 {
-                    try { success = await SendRawHttpGetAsync(address.ToString(), path, token); } catch { }
-                    if (success) break;
-                }
-                if (!success) throw new InvalidOperationException("设备未接受开启 ADB 请求，请确认 IP 和网络连接。\n可尝试在浏览器打开设备管理页面后重试。");
-                var rebootPath = urls[0].StartsWith("/reqproc", StringComparison.OrdinalIgnoreCase) ? "/reqproc/proc_post?isTest=false&goformId=REBOOT_DEVICE" : "/goform/goform_set_cmd_process?isTest=false&goformId=REBOOT_DEVICE";
-                try { await SendRawHttpGetAsync(address.ToString(), rebootPath, token); } catch { }
-                StatusText.Text = "开启请求已成功，设备正在重启…";
-                await Task.Delay(5000, token);
-            });
+                    var paths = enableAdb
+                        ? new[] { "/reqproc/proc_post?goformId=SET_DEVICE_MODE&debug_enable=1", "/goform/goform_set_cmd_process?goformId=SET_DEVICE_MODE&debug_enable=1", "/reqproc/proc_post?isTest=false&goformId=tw_telnet_config&telnetd_enable=1&debug_enable=1", "/goform/goform_set_cmd_process?isTest=false&goformId=tw_telnet_config&telnetd_enable=1&debug_enable=1" }
+                        : new[] { "/reqproc/proc_post?goformId=SET_DEVICE_MODE&debug_enable=0", "/goform/goform_set_cmd_process?goformId=SET_DEVICE_MODE&debug_enable=0" };
+                    var successPath = (string)null;
+                    foreach (var path in paths)
+                    {
+                        try
+                        {
+                            LogService.Instance.Debug("ADBSettings", "尝试设备接口：" + path);
+                            if (await SendRawHttpGetAsync(address.ToString(), path, token, enableAdb ? "success" : "successfully"))
+                            {
+                                successPath = path;
+                                break;
+                            }
+                        }
+                        catch (Exception ex) { LogService.Instance.Debug("ADBSettings", "设备接口请求失败：" + path, ex); }
+                    }
+                    if (successPath == null)
+                    {
+                        throw new InvalidOperationException(enableAdb
+                            ? "设备未接受开启 ADB 请求，请确认 IP 和网络连接。\n可尝试在浏览器打开设备管理页面后重试。"
+                            : "设备未接受关闭 ADB 请求，请确认 IP 和网络连接。\n已尝试两种设备接口。");
+                    }
+                    LogService.Instance.Info("ADBSettings", "设备接口执行成功：" + successPath);
+
+                    var rebootPath = successPath.StartsWith("/reqproc", StringComparison.OrdinalIgnoreCase)
+                        ? "/reqproc/proc_post?isTest=false&goformId=REBOOT_DEVICE"
+                        : "/goform/goform_set_cmd_process?isTest=false&goformId=REBOOT_DEVICE";
+                    try { LogService.Instance.Debug("ADBSettings", "请求设备重启：" + rebootPath); await SendRawHttpGetAsync(address.ToString(), rebootPath, token); }
+                    catch (Exception ex) { LogService.Instance.Warn("ADBSettings", "设备重启请求失败", ex); }
+                    SetAdbSettingsStatus(state, (enableAdb ? "开启" : "关闭") + "请求已成功，设备正在重启…");
+                    await Task.Delay(5000, token);
+                }, message => state.Text = message, delegate(Exception ex) { state.Text = "操作失败：" + ex.Message; });
+            }
+            finally
+            {
+                enableButton.IsEnabled = true;
+                disableButton.IsEnabled = true;
+                closeButton.IsEnabled = true;
+                ip.IsEnabled = true;
+            }
         }
 
         private void ShowInfiniteRebootRepairDialog()
@@ -742,8 +789,9 @@ namespace WiFitool
             return false;
         }
 
-        private static async Task<bool> SendRawHttpGetAsync(string host, string path, CancellationToken token)
+        private static async Task<bool> SendRawHttpGetAsync(string host, string path, CancellationToken token, string successMarker = "success")
         {
+            LogService.Instance.Debug("HTTP", "请求设备接口 " + host + path);
             using (var client = new TcpClient())
             {
                 await client.ConnectAsync(host, 80);
@@ -751,14 +799,20 @@ namespace WiFitool
                 using (var writer = new StreamWriter(stream, System.Text.Encoding.ASCII, 1024, true) { NewLine = "\r\n", AutoFlush = true })
                 {
                     await writer.WriteAsync("GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
-                    using (var reader = new StreamReader(stream, System.Text.Encoding.ASCII)) { var response = await reader.ReadToEndAsync(); return response.IndexOf("success", StringComparison.OrdinalIgnoreCase) >= 0; }
+                    using (var reader = new StreamReader(stream, System.Text.Encoding.ASCII))
+                    {
+                        var response = await reader.ReadToEndAsync();
+                        var success = response.IndexOf(successMarker, StringComparison.OrdinalIgnoreCase) >= 0;
+                        LogService.Instance.Debug("HTTP", "设备接口响应结果：" + success + "，匹配标记 " + successMarker);
+                        return success;
+                    }
                 }
             }
         }
 
-        private string ShowAdbEnableDialog()
+        private void ShowAdbSettingsDialog()
         {
-            var window = new Window { Owner = this, Title = "开启 ADB", Width = 470, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent, ShowInTaskbar = false };
+            var window = new Window { Owner = this, Title = "设置 ADB", Width = 470, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent, ShowInTaskbar = false };
             var border = new Border { Background = (Brush)FindResource("PanelBrush"), BorderBrush = (Brush)FindResource("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(20) };
             border.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 22, ShadowDepth = 5, Opacity = 0.42, Color = Colors.Black };
             var form = new Grid();
@@ -766,20 +820,60 @@ namespace WiFitool
             form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var header = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
-            header.Children.Add(new TextBlock { Text = "开启 ADB", FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("TextBrush") });
+            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var header = new Grid { Margin = new Thickness(0, 0, 0, 18) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.Children.Add(new TextBlock { Text = "设置 ADB", FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("TextBrush") });
+            var close = new Button { Content = "×", Width = 30, Height = 30, Padding = new Thickness(0), Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 18 };
+            Grid.SetColumn(close, 1); header.Children.Add(close);
             Grid.SetRow(header, 0); form.Children.Add(header);
-            var hint = new TextBlock { Text = "通过设备 Web 接口开启调试模式，设备可能会自动重启。", Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
+            var hint = new TextBlock { Text = "通过设备 Web 接口开启或关闭调试模式，设备可能会自动重启。操作完成后窗口仍会保持显示。", Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
             Grid.SetRow(hint, 1); form.Children.Add(hint);
-            var ip = new TextBox { Text = "192.168.100.1", MinWidth = 260, Height = 32, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "设备管理 IP 地址" };
+            var ip = new TextBox { Text = "192.168.0.1", MinWidth = 260, Height = 32, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "设备管理 IP 地址" };
             var fields = new Grid(); fields.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); fields.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             fields.Children.Add(new TextBlock { Text = "设备 IP", VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)FindResource("MutedBrush"), Margin = new Thickness(0, 0, 14, 0) }); Grid.SetColumn(ip, 1); fields.Children.Add(ip);
             Grid.SetRow(fields, 2); form.Children.Add(fields);
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 18, 0, 0) };
-            var cancel = new Button { Content = "取消", IsCancel = true, Margin = new Thickness(0, 0, 8, 0) }; var start = new Button { Content = "开启 ADB", Style = (Style)FindResource("PrimaryButton"), IsDefault = true };
-            buttons.Children.Add(cancel); buttons.Children.Add(start); Grid.SetRow(buttons, 3); form.Children.Add(buttons); border.Child = form; window.Content = border;
-            cancel.Click += delegate { window.Close(); }; start.Click += delegate { if (string.IsNullOrWhiteSpace(ip.Text)) return; window.Tag = ip.Text.Trim(); window.DialogResult = true; };
-            return window.ShowDialog() == true ? (string)window.Tag : null;
+            var state = new TextBlock { Text = "等待操作", Foreground = (Brush)FindResource("MutedBrush"), TextWrapping = TextWrapping.Wrap, MinHeight = 34, Margin = new Thickness(0, 14, 0, 0) };
+            Grid.SetRow(state, 3); form.Children.Add(state);
+            var enable = new Button { Content = "开启 ADB", Style = (Style)FindResource("PrimaryButton"), IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+            var disable = new Button { Content = "关闭 ADB", Margin = new Thickness(0, 0, 8, 0) };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+            buttons.Children.Add(enable); buttons.Children.Add(disable); Grid.SetRow(buttons, 4); form.Children.Add(buttons); border.Child = form; window.Content = border;
+            var operationRunning = false;
+            Action closeWindow = delegate
+            {
+                if (operationRunning) { SetAdbSettingsStatus(state, "任务正在执行，请等待完成。"); return; }
+                window.Close();
+            };
+            close.Click += delegate { closeWindow(); };
+            window.Closing += delegate(object sender, CancelEventArgs e)
+            {
+                if (!operationRunning) return;
+                e.Cancel = true;
+                SetAdbSettingsStatus(state, "任务正在执行，请等待完成。");
+            };
+            enable.Click += async delegate
+            {
+                if (operationRunning) return;
+                operationRunning = true;
+                try { await RunAdbSettingsActionAsync(ip, state, enable, disable, close, true); }
+                finally { operationRunning = false; }
+            };
+            disable.Click += async delegate
+            {
+                if (operationRunning) return;
+                operationRunning = true;
+                try { await RunAdbSettingsActionAsync(ip, state, enable, disable, close, false); }
+                finally { operationRunning = false; }
+            };
+            window.ShowDialog();
+        }
+
+        private void SetAdbSettingsStatus(TextBlock state, string message)
+        {
+            state.Text = message;
+            StatusText.Text = message;
         }
 
         private void ShowAdbRepairDialog()
@@ -924,41 +1018,49 @@ namespace WiFitool
         {
             var adbdPath = Path.Combine(ToolEnvironment.Root, "adbd", "adbd");
             if (!File.Exists(adbdPath)) throw new FileNotFoundException("缺少内置 adbd 文件，请先等待工具环境下载完成。", adbdPath);
+            LogService.Instance.Info("ADBRepair", "开始修复，AT 端口 " + options.PortName + "，本机 IP " + options.LocalIp);
             SetAdbRepairStatus(reportStatus, "正在连接 AT 端口：" + options.PortName);
             using (var at = AtPortService.Open(options.PortName))
             {
                 var test = at.Send("AT", 500);
                 if (test.IndexOf("OK", StringComparison.OrdinalIgnoreCase) < 0) throw new InvalidOperationException("AT 端口无响应，请确认端口没有被其他程序占用。");
+                LogService.Instance.Debug("ADBRepair", "AT 端口响应正常");
                 at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/adb_enable", 700);
                 at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/enable", 700);
                 // 部分设备只需通过专用 AT 命令重启 adbd，无需传输文件。
                 foreach (var compatibilityCommand in new[] { "AT+ZKILL=foo;adbd &", "AT+RKILL=foo;adbd &" })
                 {
                     SetAdbRepairStatus(reportStatus, "正在尝试兼容修复方案…");
+                    LogService.Instance.Info("ADBRepair", "尝试兼容命令：" + compatibilityCommand);
                     at.Send(compatibilityCommand, 1000);
                     await Task.Delay(1800, token);
                     await CheckAdbStatusAsync();
                     if (adbStatus != null && adbStatus.DeviceState == "online")
                     {
+                        LogService.Instance.Info("ADBRepair", "兼容命令已使 ADB 在线");
                         SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                         return;
                     }
                 }
                 // 轻量探测设备已有的 adbd，存在且可执行时直接启动，避免重复上传。
                 SetAdbRepairStatus(reportStatus, "正在检查设备已有 adbd…");
+                LogService.Instance.Info("ADBRepair", "尝试启动设备已有 /bin/adbd");
                 at.Send("AT+SHELL=/bin/adbd &", 1000);
                 await Task.Delay(1200, token);
                 await CheckAdbStatusAsync();
                 if (adbStatus != null && adbStatus.DeviceState == "online")
                 {
+                    LogService.Instance.Info("ADBRepair", "设备已有 /bin/adbd 已使 ADB 在线");
                     SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                     return;
                 }
+                LogService.Instance.Info("ADBRepair", "尝试启动设备已有 /mnt/userdata/etc_rw/nv/adbd");
                 at.Send("AT+SHELL=/mnt/userdata/etc_rw/nv/adbd &", 1000);
                 await Task.Delay(1200, token);
                 await CheckAdbStatusAsync();
                 if (adbStatus != null && adbStatus.DeviceState == "online")
                 {
+                    LogService.Instance.Info("ADBRepair", "设备已有 nv/adbd 已使 ADB 在线");
                     SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                     return;
                 }
@@ -969,6 +1071,7 @@ namespace WiFitool
                     try { server.Start(); }
                     catch (System.Net.Sockets.SocketException ex) { throw new InvalidOperationException("UDP 69 端口被占用或无法监听：" + ex.Message); }
                     SetAdbRepairStatus(reportStatus, "正在等待设备下载 adbd…");
+                    LogService.Instance.Info("ADBRepair", "等待设备通过 TFTP 下载 adbd");
                     // 将内置 adbd 下载到可写的 nv 目录。
                     at.Send("AT+SHELL=rm -f /mnt/userdata/etc_rw/nv/adbd", 700);
                     var download = at.Send("AT+SHELL=tftp -l /mnt/userdata/etc_rw/nv/adbd -r adbd -g " + options.LocalIp, 1500);
@@ -978,6 +1081,7 @@ namespace WiFitool
                         throw new InvalidOperationException("设备未请求 adbd 文件，请确认本机 IP、UDP 69 端口和 TFTP 服务。设备返回：" + download.Trim());
                 }
                 SetAdbRepairStatus(reportStatus, "正在启动 adbd…");
+                LogService.Instance.Info("ADBRepair", "TFTP 下载完成，启动设备端 adbd");
                 var startCommand = "chmod 777 /mnt/userdata/etc_rw/nv/adbd; sync; killall adbd 2>/dev/null; /mnt/userdata/etc_rw/nv/adbd &";
                 at.Send("AT+SHELL=" + startCommand, 1500);
             }
@@ -990,12 +1094,14 @@ namespace WiFitool
                 var status = await adbService.CheckStatusAsync(token);
                 if (status.DeviceState == "online")
                 {
+                    LogService.Instance.Info("ADBRepair", "ADB 已在线，轮询次数 " + (attempt + 1));
                     await CheckAdbStatusAsync();
                     SetAdbRepairStatus(reportStatus, "修复完成：ADB 已连接");
                     return;
                 }
                 await Task.Delay(1000, token);
             }
+            LogService.Instance.Warn("ADBRepair", "adbd 已启动但 30 次轮询后仍未在线");
             throw new InvalidOperationException("adbd 已启动，但设备仍未进入 ADB online 状态。请检查 USB 是否重新枚举，或确认设备端 adb_enable 已开启。" );
         }
 

@@ -19,9 +19,11 @@ namespace WiFitool.Services
     {
         public Task<ToolResult> RunWithInputAsync(string executable, IEnumerable<string> arguments, string workingDirectory, byte[] input, CancellationToken token)
         {
+            var normalizedArguments = arguments == null ? new List<string>() : new List<string>(arguments);
+            LogService.Instance.Debug("ToolRunner", "执行外部工具（带输入）：" + Path.GetFileName(executable) + " " + BuildArguments(normalizedArguments));
             return Task.Run(() =>
             {
-                var info = new ProcessStartInfo { FileName = executable, Arguments = BuildArguments(arguments), WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                var info = new ProcessStartInfo { FileName = executable, Arguments = BuildArguments(normalizedArguments), WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
                 using (var process = new Process { StartInfo = info })
                 {
                     if (!process.Start()) throw new InvalidOperationException("无法启动工具：" + executable);
@@ -57,14 +59,18 @@ namespace WiFitool.Services
                     process.WaitForExit();
                     lock (outputLock)
                     {
-                        return new ToolResult { ExitCode = process.ExitCode, StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
+                        var result = new ToolResult { ExitCode = process.ExitCode, StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
+                        LogToolResult(executable, normalizedArguments, result);
+                        return result;
                     }
                 }
             }, token);
         }
         public Task<ToolResult> RunAsync(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output = null, Encoding textEncoding = null)
         {
-            return Task.Run(() => Run(executable, arguments, workingDirectory, token, output, textEncoding), token);
+            var normalizedArguments = arguments == null ? new List<string>() : new List<string>(arguments);
+            LogService.Instance.Debug("ToolRunner", "执行外部工具：" + Path.GetFileName(executable) + " " + BuildArguments(normalizedArguments));
+            return Task.Run(() => Run(executable, normalizedArguments, workingDirectory, token, output, textEncoding), token);
         }
 
         private static ToolResult Run(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output, Encoding textEncoding)
@@ -93,11 +99,11 @@ namespace WiFitool.Services
                 var stderr = new StringBuilder();
                 process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs args)
                 {
-                    if (args.Data != null) { stdout.AppendLine(args.Data); if (output != null) output(args.Data, false); }
+                    if (args.Data != null) { stdout.AppendLine(args.Data); LogService.Instance.Debug("ToolRunner", Path.GetFileName(executable) + " stdout: " + args.Data); if (output != null) output(args.Data, false); }
                 };
                 process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs args)
                 {
-                    if (args.Data != null) { stderr.AppendLine(args.Data); if (output != null) output(args.Data, true); }
+                    if (args.Data != null) { stderr.AppendLine(args.Data); LogService.Instance.Debug("ToolRunner", Path.GetFileName(executable) + " stderr: " + args.Data); if (output != null) output(args.Data, true); }
                 };
                 if (!process.Start()) throw new InvalidOperationException("无法启动工具：" + executable);
                 process.BeginOutputReadLine();
@@ -111,8 +117,17 @@ namespace WiFitool.Services
                     }
                 }
                 process.WaitForExit();
-                return new ToolResult { ExitCode = process.ExitCode, StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
+                var result = new ToolResult { ExitCode = process.ExitCode, StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
+                LogToolResult(executable, arguments, result);
+                return result;
             }
+        }
+
+        private static void LogToolResult(string executable, IEnumerable<string> arguments, ToolResult result)
+        {
+            var command = Path.GetFileName(executable) + " " + BuildArguments(arguments) + "，退出码 " + result.ExitCode;
+            if (result.ExitCode == 0) LogService.Instance.Debug("ToolRunner", "完成外部工具：" + command);
+            else LogService.Instance.Warn("ToolRunner", "外部工具失败：" + command + "，错误：" + (result.StandardError ?? "").Trim());
         }
 
         private static void TryKill(Process process)

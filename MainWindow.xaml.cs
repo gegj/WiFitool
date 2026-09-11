@@ -28,6 +28,7 @@ namespace WiFitool
         private readonly ToolRunner toolRunner = new ToolRunner();
         private readonly FileSystemService fileSystemService;
         private readonly AdbService adbService;
+        private readonly LogService logService = LogService.Instance;
         private readonly RootfsFeatureService rootfsFeatureService = new RootfsFeatureService();
         private readonly UpdateService updateService = new UpdateService();
         private readonly DispatcherTimer adbTimer;
@@ -63,6 +64,7 @@ namespace WiFitool
         private bool compactContentMargin;
         private bool updateChecking;
         private bool toolEnvironmentChecking;
+        private bool logLevelControlReady;
         private string fileSearchKeyword;
         private List<WorkspaceEntry> searchResults;
         private readonly DispatcherTimer searchTimer;
@@ -76,6 +78,8 @@ namespace WiFitool
             InitializeComponent();
             InitializeToolbox();
             FitInitialWindowToWorkArea();
+            LogLevelComboBox.SelectedItem = LogLevelComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => string.Equals((item.Tag ?? "").ToString(), logService.Level.ToString(), StringComparison.OrdinalIgnoreCase));
+            logLevelControlReady = true;
             Title = "WiFitool v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3);
             fileSystemService = new FileSystemService(toolRunner);
             adbService = new AdbService(toolRunner);
@@ -87,8 +91,8 @@ namespace WiFitool
             FileGrid.ItemsSource = files;
             DomainScanGrid.ItemsSource = domainResults;
             SizeChanged += MainWindow_SizeChanged;
-            Loaded += async delegate { ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
-            Closing += delegate { adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); if (terminalCancellation != null) terminalCancellation.Cancel(); };
+            Loaded += async delegate { logService.Info("App", "主窗口已加载，版本 " + typeof(MainWindow).Assembly.GetName().Version.ToString(3)); ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
+            Closing += delegate { logService.Info("App", "主窗口正在关闭"); adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); if (terminalCancellation != null) terminalCancellation.Cancel(); };
             ProcessGrid.ContextMenu = CreateProcessMenu(false);
             CoreProcessGrid.ContextMenu = CreateProcessMenu(true);
             FileGrid.ContextMenu = CreateFileMenu();
@@ -187,6 +191,32 @@ namespace WiFitool
             await CheckForUpdatesAsync(true);
         }
 
+        private void LogLevelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!logLevelControlReady || LogLevelComboBox.SelectedItem == null) return;
+            var item = LogLevelComboBox.SelectedItem as ComboBoxItem;
+            LogLevel level;
+            if (item == null || !Enum.TryParse((item.Tag ?? "Off").ToString(), true, out level)) return;
+            logService.SetLevel(level);
+            StatusText.Text = level == LogLevel.Off ? "运行日志已关闭" : "运行日志级别已设置为 " + level;
+            if (level != LogLevel.Off) logService.Info("UI", "运行日志级别设置为 " + level);
+        }
+
+        private void ClearLogButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                logService.ClearLogs();
+                StatusText.Text = "运行日志已清空";
+                if (logService.Level != LogLevel.Off) logService.Info("UI", "用户清空了运行日志");
+            }
+            catch (Exception ex)
+            {
+                logService.Error("UI", "清空运行日志失败", ex);
+                StatusText.Text = "运行日志清空失败：" + ex.Message;
+            }
+        }
+
         private async Task CheckForUpdatesAsync(bool userInitiated)
         {
             if (updateChecking) return;
@@ -197,6 +227,7 @@ namespace WiFitool
             }
 
             updateChecking = true;
+            logService.Info("Update", userInitiated ? "用户开始检查更新" : "开始自动检查更新");
             CheckUpdateButton.IsEnabled = false;
             StatusText.Text = "正在检查更新…";
             BeginTaskProgress();
@@ -206,12 +237,14 @@ namespace WiFitool
                 if (string.IsNullOrEmpty(result.Error)) updateService.MarkCheckCompleted();
                 if (!string.IsNullOrEmpty(result.Error))
                 {
+                    logService.Warn("Update", "更新检查失败：" + result.Error);
                     StatusText.Text = "更新检查失败";
                     if (userInitiated) MessageBox.Show(this, result.Error, "检查更新失败", MessageBoxButton.OK, MessageBoxImage.Error, UpdateDialogWidth);
                     return;
                 }
                 if (!result.HasUpdate)
                 {
+                    logService.Info("Update", "当前已是最新版本");
                     StatusText.Text = "当前已是最新版本";
                     if (userInitiated) MessageBox.Show(this, "当前已是最新版本。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information, UpdateDialogWidth);
                     return;
@@ -232,11 +265,13 @@ namespace WiFitool
                 });
                 var downloadedPath = await updateService.DownloadUpdateAsync(result.Update, progress);
                 updateService.ReplaceAfterExit(downloadedPath);
+                logService.Info("Update", "更新文件已准备完成，版本 " + result.Update.Version);
                 StatusText.Text = "更新准备完成，正在重启…";
                 Application.Current.Shutdown();
             }
             catch (Exception ex)
             {
+                logService.Error("Update", "更新流程失败", ex);
                 StatusText.Text = "更新失败";
                 MessageBox.Show(this, ex.Message, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error, UpdateDialogWidth);
             }
@@ -252,10 +287,12 @@ namespace WiFitool
         {
             if (toolEnvironmentChecking) return;
             toolEnvironmentChecking = true;
+            logService.Info("ToolEnvironment", "开始检查工具环境");
             try
             {
                 if (ToolEnvironment.IsReady())
                 {
+                    logService.Info("ToolEnvironment", "工具环境已就绪");
                     EnvironmentText.Text = "工具环境：正常";
                     return;
                 }
@@ -266,11 +303,13 @@ namespace WiFitool
                 {
                     var progress = new Progress<int>(value => UpdateTaskProgress(value));
                     await ToolEnvironment.EnsureReadyAsync(progress);
+                    logService.Info("ToolEnvironment", "工具环境准备完成");
                     EnvironmentText.Text = "工具环境：正常";
                     StatusText.Text = "工具环境准备完成";
                 }
-                catch
+                catch (Exception ex)
                 {
+                    logService.Error("ToolEnvironment", "工具环境准备失败", ex);
                     EnvironmentText.Text = "工具环境：下载失败";
                     StatusText.Text = "工具环境下载失败，请手动解压 tools 到 " + ToolEnvironment.Root;
                 }
@@ -1673,6 +1712,7 @@ namespace WiFitool
                 var state = await adbService.CheckStatusAsync(CancellationToken.None);
                 var nextSerial = state.Serial;
                 var deviceChanged = !string.Equals(previousSerial, nextSerial, StringComparison.OrdinalIgnoreCase) || !string.Equals(previousState, state.DeviceState, StringComparison.OrdinalIgnoreCase);
+                if (deviceChanged) logService.Info("ADB", "设备状态变化：" + previousState + " -> " + state.DeviceState + (string.IsNullOrWhiteSpace(nextSerial) ? "" : "，序列号 " + nextSerial));
                 adbStatus = state; adbSerial = nextSerial;
                 var remountError = "";
                 if (deviceChanged && state.DeviceState == "online")
@@ -1707,7 +1747,7 @@ namespace WiFitool
                 UpdateTerminalState();
                 if (state.DeviceState == "online" && FilesView.Visibility == Visibility.Visible && !adbMode && string.IsNullOrEmpty(currentRoot)) await ActivateAdbSourceAsync(false);
             }
-            catch (Exception ex) { ClearProcessCache(); ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; AdbStatusText.Text = "ADB 检测失败：" + ex.Message; AdbExportButton.IsEnabled = false; RefreshProcessButton.IsEnabled = false; UpdateTerminalState(); }
+            catch (Exception ex) { logService.Warn("ADB", "ADB 状态检测失败", ex); ClearProcessCache(); ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; AdbStatusText.Text = "ADB 检测失败：" + ex.Message; AdbExportButton.IsEnabled = false; RefreshProcessButton.IsEnabled = false; UpdateTerminalState(); }
             finally { if (showProgress) EndTaskProgress(); adbChecking = false; }
         }
 
@@ -1818,13 +1858,15 @@ namespace WiFitool
         {
             if (activeCancellation != null) return;
             activeCancellation = new CancellationTokenSource();
+            logService.Info("Operation", "开始：" + message);
             Action<string> setStatus = value => { StatusText.Text = value; if (reportStatus != null) reportStatus(value); };
             setStatus(message);
             BeginTaskProgress();
-            try { await action(activeCancellation.Token); }
-            catch (OperationCanceledException) { setStatus("操作已取消"); }
+            try { await action(activeCancellation.Token); logService.Info("Operation", "完成：" + message); }
+            catch (OperationCanceledException) { logService.Warn("Operation", "取消：" + message); setStatus("操作已取消"); }
             catch (Exception ex)
             {
+                logService.Error("Operation", "失败：" + message, ex);
                 setStatus("操作失败：" + ex.Message);
                 if (onError != null) onError(ex);
                 else MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -1834,8 +1876,11 @@ namespace WiFitool
 
         private async Task RunTaskProgressAsync(Func<Task> action)
         {
+            logService.Debug("Operation", "开始无取消进度任务");
             BeginTaskProgress();
-            try { await action(); }
+            try { await action(); logService.Debug("Operation", "无取消进度任务完成"); }
+            catch (OperationCanceledException) { logService.Warn("Operation", "无取消进度任务已取消"); throw; }
+            catch (Exception ex) { logService.Error("Operation", "无取消进度任务失败", ex); throw; }
             finally { EndTaskProgress(); }
         }
 
