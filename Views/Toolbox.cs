@@ -319,7 +319,7 @@ namespace WiFitool
 
             var note = new TextBlock
             {
-                Text = "从网络下载驱动并启动安装程序。每个安装程序结束后才会继续下一个，完成后自动清理临时文件。",
+                Text = "从网络下载驱动并启动安装程序。已下载的驱动包会保留，下次安装时优先复用；仅清理解压临时文件。",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = (Brush)FindResource("MutedBrush"),
                 FontSize = 12,

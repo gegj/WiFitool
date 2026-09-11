@@ -37,6 +37,7 @@ namespace WiFitool.Services
     internal sealed class DriverInstallService
     {
         private static readonly HttpClient client = CreateClient();
+        private static readonly string cacheDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Drivers");
         private static readonly DriverInstallPackage[] packages =
         {
             new DriverInstallPackage(
@@ -78,14 +79,28 @@ namespace WiFitool.Services
             var workRoot = Path.Combine(Path.GetTempPath(), "WiFitool", "Drivers", Guid.NewGuid().ToString("N"));
             var zipPath = Path.Combine(workRoot, "driver.zip");
             var extractPath = Path.Combine(workRoot, "extracted");
+            var cachedZipPath = GetCachedZipPath(package);
             try
             {
                 Directory.CreateDirectory(workRoot);
-                Report(reportStatus, "正在下载 " + package.Name + "…");
-                LogService.Instance.Info("DriverInstall", "开始下载驱动包：" + package.Name);
-                LogService.Instance.Debug("DriverInstall", "下载地址：" + package.Url + "，临时目录：" + workRoot);
-                await DownloadAsync(package.Url, zipPath, token, reportStatus);
-                LogService.Instance.Info("DriverInstall", "驱动包下载完成：" + package.Name + "，大小 " + new FileInfo(zipPath).Length + " 字节");
+                Directory.CreateDirectory(cacheDirectory);
+                if (IsUsableArchive(cachedZipPath))
+                {
+                    zipPath = cachedZipPath;
+                    Report(reportStatus, "正在使用已缓存的 " + package.Name + "…");
+                    LogService.Instance.Info("DriverInstall", "使用已缓存驱动包：" + cachedZipPath);
+                }
+                else
+                {
+                    if (File.Exists(cachedZipPath)) TryDeleteFile(cachedZipPath);
+                    Report(reportStatus, "正在下载 " + package.Name + "…");
+                    LogService.Instance.Info("DriverInstall", "开始下载驱动包：" + package.Name);
+                    LogService.Instance.Debug("DriverInstall", "下载地址：" + package.Url + "，临时目录：" + workRoot);
+                    await DownloadAsync(package.Url, zipPath, token, reportStatus);
+                    File.Move(zipPath, cachedZipPath);
+                    zipPath = cachedZipPath;
+                    LogService.Instance.Info("DriverInstall", "驱动包已缓存：" + cachedZipPath + "，大小 " + new FileInfo(zipPath).Length + " 字节");
+                }
 
                 Report(reportStatus, "正在解压 " + package.Name + "…");
                 ExtractZip(zipPath, extractPath);
@@ -270,6 +285,32 @@ namespace WiFitool.Services
             {
                 LogService.Instance.Warn("DriverInstall", "临时驱动文件清理失败：" + path, ex);
             }
+        }
+
+        private static string GetCachedZipPath(DriverInstallPackage package)
+        {
+            var fileName = string.IsNullOrWhiteSpace(package.Name) ? "driver" : package.Name;
+            foreach (var invalid in Path.GetInvalidFileNameChars()) fileName = fileName.Replace(invalid, '_');
+            return Path.Combine(cacheDirectory, fileName + ".zip");
+        }
+
+        private static bool IsUsableArchive(string path)
+        {
+            if (!File.Exists(path)) return false;
+            try
+            {
+                using (var archive = ZipFile.OpenRead(path)) return archive.Entries.Count > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (Exception ex) { LogService.Instance.Warn("DriverInstall", "缓存驱动包清理失败：" + path, ex); }
         }
     }
 }
