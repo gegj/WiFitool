@@ -87,6 +87,11 @@
                   <TextBlock Text="设备状态" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
                   <TextBlock Grid.Column="1" x:Name="AdbDeviceStateText" Text="未连接" FontWeight="SemiBold" FontSize="11" />
                 </Grid>
+                <Grid Margin="0,12,0,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <TextBlock Text="AT 串口" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                  <TextBlock Grid.Column="1" x:Name="AtPortStateText" Text="未检测" FontWeight="SemiBold" FontSize="11" TextAlignment="Right" />
+                </Grid>
                 <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,11,0,0" />
                 <StackPanel Margin="0,11,0,0">
                   <Grid>

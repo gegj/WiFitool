@@ -1240,8 +1240,8 @@ namespace WiFitool
                 at.Send("AT+SHELL=sync", 700);
                 LogService.Instance.Info("ADBRepair", "执行启动步骤 3/5：killall adbd");
                 at.Send("AT+SHELL=killall adbd 2>/dev/null", 700);
-                LogService.Instance.Info("ADBRepair", "执行启动步骤 4/5：启动 " + targetAdbd);
-                at.Send("AT+SHELL=" + targetAdbd, 1200);
+                LogService.Instance.Info("ADBRepair", "执行启动步骤 4/5：后台启动 " + targetAdbd);
+                at.Send("AT+SHELL=" + targetAdbd + " &", 1200);
                 LogService.Instance.Info("ADBRepair", "执行启动步骤 5/5：写入 adb_enable=1");
                 at.Send("AT+SHELL=echo 1 >/sys/devices/virtual/android_usb/android0/adb_enable", 700);
             }

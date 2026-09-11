@@ -49,6 +49,7 @@ namespace WiFitool
         private string adbSerial;
         private AdbStatusInfo adbStatus = new AdbStatusInfo();
         private CancellationTokenSource activeCancellation;
+        private CancellationTokenSource atPortEnumerationCancellation;
         private readonly SemaphoreSlim adbStatusGate = new SemaphoreSlim(1, 1);
         private CancellationTokenSource terminalCancellation;
         private bool terminalExecuting;
@@ -93,7 +94,7 @@ namespace WiFitool
             DomainScanGrid.ItemsSource = domainResults;
             SizeChanged += MainWindow_SizeChanged;
             Loaded += async delegate { logService.Info("App", "主窗口已加载，版本 " + typeof(MainWindow).Assembly.GetName().Version.ToString(3)); ApplyResponsiveLayout(); SetView(OverviewView); await EnsureToolEnvironmentAsync(); adbTimer.Start(); await CheckAdbStatusAsync(); if (updateService.IsAutomaticCheckDue()) await CheckForUpdatesAsync(false); };
-            Closing += delegate { logService.Info("App", "主窗口正在关闭"); adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); if (terminalCancellation != null) terminalCancellation.Cancel(); };
+            Closing += delegate { logService.Info("App", "主窗口正在关闭"); adbTimer.Stop(); adbService.StopOwnedAdbServer(); if (workspace != null) workspaceService.Cleanup(workspace); if (activeCancellation != null) activeCancellation.Cancel(); if (atPortEnumerationCancellation != null) atPortEnumerationCancellation.Cancel(); if (terminalCancellation != null) terminalCancellation.Cancel(); };
             ProcessGrid.ContextMenu = CreateProcessMenu(false);
             CoreProcessGrid.ContextMenu = CreateProcessMenu(true);
             FileGrid.ContextMenu = CreateFileMenu();
@@ -888,15 +889,57 @@ namespace WiFitool
             AdbTerminalDeviceText.Text = online ? "设备：" + adbSerial : "未连接设备";
             AdbTerminalBox.IsEnabled = online && !terminalExecuting;
         }
-        private void AdbStatusButton_Click(object sender, RoutedEventArgs e)
+        private async void AdbStatusButton_Click(object sender, RoutedEventArgs e)
         {
-            AdbDetailsPopup.IsOpen = !AdbDetailsPopup.IsOpen;
+            if (AdbDetailsPopup.IsOpen)
+            {
+                AdbDetailsPopup.IsOpen = false;
+                return;
+            }
+            AdbDetailsPopup.IsOpen = true;
+            await RefreshAtPortStatusAsync();
         }
 
         private async void AdbRefreshButton_Click(object sender, RoutedEventArgs e)
         {
             await CheckAdbStatusAsync(true);
             AdbDetailsPopup.IsOpen = true;
+            await RefreshAtPortStatusAsync();
+        }
+
+        private async Task RefreshAtPortStatusAsync()
+        {
+            if (activeCancellation != null)
+            {
+                AtPortStateText.Text = "其他操作进行中";
+                return;
+            }
+            if (atPortEnumerationCancellation != null) atPortEnumerationCancellation.Cancel();
+            var current = new CancellationTokenSource();
+            atPortEnumerationCancellation = current;
+            AtPortStateText.Text = "读取设备管理器…";
+            try
+            {
+                var ports = await Task.Run(() => AtPortService.GetAvailablePorts()
+                    .Where(x => x.IsNamedAtPort)
+                    .Select(x => x.PortName)
+                    .ToList(), current.Token);
+                if (current.IsCancellationRequested) return;
+                AtPortStateText.Text = ports.Count == 0 ? "未检测到" : string.Join("、", ports);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                logService.Warn("AT", "AT 串口状态检测失败", ex);
+                AtPortStateText.Text = "检测失败";
+            }
+            finally
+            {
+                if (ReferenceEquals(atPortEnumerationCancellation, current)) atPortEnumerationCancellation = null;
+                current.Dispose();
+            }
         }
         private async void AdbRebootButton_Click(object sender, RoutedEventArgs e)
         {
