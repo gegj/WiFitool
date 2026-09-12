@@ -690,14 +690,14 @@ namespace WiFitool
         private async void DomainScanStartButton_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(currentRoot) || adbMode) { StatusText.Text = "请先选择已解包的本地分区"; return; }
-            domainResults.Clear(); DomainScanStartButton.IsEnabled = false; DomainScanStopButton.IsEnabled = true; BeginTaskProgress(); activeCancellation = new CancellationTokenSource();
+            domainResults.Clear(); UpdateDomainScanState(); DomainScanStartButton.IsEnabled = false; DomainScanStopButton.IsEnabled = true; BeginTaskProgress(); activeCancellation = new CancellationTokenSource();
             try
             {
                 var token = activeCancellation.Token;
                 var found = await Task.Run(() => domainScanner.Scan(currentRoot, token, path => Dispatcher.Invoke(() => StatusText.Text = "正在扫描：" + path)), token);
                 foreach (var item in found) domainResults.Add(item);
                 await Task.Run(() => domainScanner.ValidateDns(found, token, host => Dispatcher.Invoke(() => StatusText.Text = "正在验证：" + host)), token);
-                DomainScanGrid.Items.Refresh(); StatusText.Text = "扫描完成：" + domainResults.Count + " 项";
+                DomainScanGrid.Items.Refresh(); UpdateDomainScanState(); StatusText.Text = "扫描完成：" + domainResults.Count + " 项";
             }
             catch (OperationCanceledException) { StatusText.Text = "扫描已取消"; }
             catch (Exception ex) { StatusText.Text = "扫描失败：" + ex.Message; }
@@ -747,7 +747,7 @@ namespace WiFitool
             try { await RunTaskProgressAsync(() => Task.Run(() => selected.ForEach(domainScanner.Rewrite))); if (writeDevice) foreach (var item in selected.SelectMany(x => x.Occurrences).GroupBy(x => x.FilePath, StringComparer.OrdinalIgnoreCase)) await adbService.WriteFileAsync(adbSerial, "/" + item.Key.TrimStart('/'), File.ReadAllBytes(item.First().SourcePath), CancellationToken.None); DomainScanGrid.Items.Refresh(); MarkSelectedPartitionModified(); StatusText.Text = writeDevice ? "已修改并写入设备" : "已修改 " + selected.Count + " 个地址"; } catch (Exception ex) { MessageBox.Show(this, ex.Message, "修改失败", MessageBoxButton.OK, MessageBoxImage.Error); }
         }
         private void UpdateDomainScanState() { DomainScanStartButton.IsEnabled = !string.IsNullOrEmpty(currentRoot) && !adbMode && activeCancellation == null; UpdateDomainRewriteButtonState(); DomainWriteDeviceButton.IsEnabled = domainResults.Count > 0 && adbStatus != null && adbStatus.DeviceState == "online" && string.Equals(adbStatus.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase); }
-        private void UpdateDomainRewriteButtonState() { DomainRewriteButton.IsEnabled = domainResults.Count > 0; }
+        private void UpdateDomainRewriteButtonState() { DomainRewriteButton.IsEnabled = true; }
         private void MarkSelectedPartitionModified() { var partition = image == null ? null : image.Partitions.FirstOrDefault(x => x.Name.Equals(selectedPartitionName, StringComparison.OrdinalIgnoreCase)); if (partition != null) partition.Modified = true; }
         private async void FilesNav_Click(object sender, RoutedEventArgs e)
         {
@@ -917,15 +917,17 @@ namespace WiFitool
             if (atPortEnumerationCancellation != null) atPortEnumerationCancellation.Cancel();
             var current = new CancellationTokenSource();
             atPortEnumerationCancellation = current;
+            AtPortNameText.Text = "--";
             AtPortStateText.Text = "读取设备管理器…";
             try
             {
                 var ports = await Task.Run(() => AtPortService.GetAvailablePorts()
                     .Where(x => x.IsNamedAtPort)
-                    .Select(x => x.PortName)
+                    .Select(x => string.IsNullOrWhiteSpace(x.FriendlyName) ? x.PortName : x.FriendlyName)
                     .ToList(), current.Token);
                 if (current.IsCancellationRequested) return;
-                AtPortStateText.Text = ports.Count == 0 ? "未检测到" : string.Join("、", ports);
+                AtPortNameText.Text = ports.Count == 0 ? "--" : string.Join("、", ports);
+                AtPortStateText.Text = ports.Count == 0 ? "未连接" : "已连接";
             }
             catch (OperationCanceledException)
             {
@@ -933,6 +935,7 @@ namespace WiFitool
             catch (Exception ex)
             {
                 logService.Warn("AT", "AT 串口状态检测失败", ex);
+                AtPortNameText.Text = "--";
                 AtPortStateText.Text = "检测失败";
             }
             finally
@@ -1787,6 +1790,7 @@ namespace WiFitool
                 else { AdbDot.Fill = (Brush)FindResource("DisabledBrush"); AdbStatusText.Text = state.DeviceState == "no-device" ? "ADB 等待设备" : state.DeviceState == "offline" ? "ADB 设备离线" : "ADB 服务未启动"; AdbStatusSummaryText.Text = "等待设备连接"; ProcessDeviceText.Text = "未连接设备"; RefreshProcessButton.IsEnabled = false; }
                 if (deviceChanged && state.DeviceState == "online") StatusText.Text = string.Equals(state.RootFsMode, "rw", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(remountError) ? "已将系统根分区挂载为读写" : "系统根分区挂载读写失败：" + remountError;
                 UpdateFileSourceButtons();
+                UpdateDomainScanState();
                 UpdateTerminalState();
                 if (state.DeviceState == "online" && FilesView.Visibility == Visibility.Visible && !adbMode && string.IsNullOrEmpty(currentRoot)) await ActivateAdbSourceAsync(false);
             }
