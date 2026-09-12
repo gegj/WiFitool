@@ -900,13 +900,6 @@ namespace WiFitool
             await RefreshAtPortStatusAsync();
         }
 
-        private async void AdbRefreshButton_Click(object sender, RoutedEventArgs e)
-        {
-            await CheckAdbStatusAsync(true);
-            AdbDetailsPopup.IsOpen = true;
-            await RefreshAtPortStatusAsync();
-        }
-
         private async Task RefreshAtPortStatusAsync()
         {
             if (activeCancellation != null)
@@ -927,7 +920,7 @@ namespace WiFitool
                     .ToList(), current.Token);
                 if (current.IsCancellationRequested) return;
                 AtPortNameText.Text = ports.Count == 0 ? "--" : string.Join("、", ports);
-                AtPortStateText.Text = ports.Count == 0 ? "未连接" : "已连接";
+                AtPortStateText.Text = ports.Count == 0 ? "未连接" : "已识别";
             }
             catch (OperationCanceledException)
             {
@@ -944,14 +937,14 @@ namespace WiFitool
                 current.Dispose();
             }
         }
-        private async void AdbRebootButton_Click(object sender, RoutedEventArgs e)
+        private async void DeviceRebootButton_Click(object sender, RoutedEventArgs e)
         {
             if (adbStatus == null || adbStatus.DeviceState != "online" || string.IsNullOrWhiteSpace(adbSerial)) { MessageBox.Show(this, "请先连接在线 ADB 设备。", "重启设备", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             if (MessageBox.Show(this, "确认重启当前 ADB 设备吗？设备上的未保存操作可能会中断。", "重启设备", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-            AdbRebootButton.IsEnabled = false;
-            try { await adbService.RebootAsync(adbSerial, CancellationToken.None); StatusText.Text = "正在重启设备…"; AdbDetailsPopup.IsOpen = false; }
+            DeviceRebootButton.IsEnabled = false;
+            try { await adbService.RebootAsync(adbSerial, CancellationToken.None); StatusText.Text = "正在重启设备…"; }
             catch (Exception ex) { MessageBox.Show(this, "重启设备失败：" + ex.Message, "重启设备", MessageBoxButton.OK, MessageBoxImage.Error); }
-            finally { AdbRebootButton.IsEnabled = adbStatus != null && adbStatus.DeviceState == "online"; }
+            finally { DeviceRebootButton.IsEnabled = adbStatus != null && adbStatus.DeviceState == "online"; }
         }
 
         private async void HostsButton_Click(object sender, RoutedEventArgs e) { await OpenHostsAsync(); }
@@ -1747,10 +1740,9 @@ namespace WiFitool
                 || message.IndexOf("cannot open", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private async Task CheckAdbStatusAsync(bool showProgress = false)
+        private async Task CheckAdbStatusAsync()
         {
             await adbStatusGate.WaitAsync();
-            if (showProgress) BeginTaskProgress();
             try
             {
                 var previousState = adbStatus == null ? "" : adbStatus.DeviceState;
@@ -1784,7 +1776,7 @@ namespace WiFitool
                     if (terminalCancellation != null) terminalCancellation.Cancel();
                 }
                 UpdateAdbDetails(state);
-                AdbRebootButton.IsEnabled = state.DeviceState == "online";
+                DeviceRebootButton.IsEnabled = state.DeviceState == "online";
                 AdbExportButton.IsEnabled = state.DeviceState == "online";
                 if (state.DeviceState == "online") { AdbDot.Fill = (Brush)FindResource("SuccessBrush"); AdbStatusText.Text = "ADB 设备在线"; AdbStatusSummaryText.Text = "系统 " + FormatAdbSpace(state.System == null ? 0 : state.System.FreeBytes) + " · 用户 " + FormatAdbSpace(state.Userdata == null ? 0 : state.Userdata.FreeBytes); ProcessDeviceText.Text = "设备在线"; RefreshProcessButton.IsEnabled = true; }
                 else { AdbDot.Fill = (Brush)FindResource("DisabledBrush"); AdbStatusText.Text = state.DeviceState == "no-device" ? "ADB 等待设备" : state.DeviceState == "offline" ? "ADB 设备离线" : "ADB 服务未启动"; AdbStatusSummaryText.Text = "等待设备连接"; ProcessDeviceText.Text = "未连接设备"; RefreshProcessButton.IsEnabled = false; }
@@ -1795,17 +1787,20 @@ namespace WiFitool
                 if (state.DeviceState == "online" && FilesView.Visibility == Visibility.Visible && !adbMode && string.IsNullOrEmpty(currentRoot)) await ActivateAdbSourceAsync(false);
             }
             catch (Exception ex) { logService.Warn("ADB", "ADB 状态检测失败", ex); ClearProcessCache(); ProcessGrid.ItemsSource = null; CoreProcessGrid.ItemsSource = null; AdbStatusText.Text = "ADB 检测失败：" + ex.Message; AdbExportButton.IsEnabled = false; RefreshProcessButton.IsEnabled = false; UpdateTerminalState(); }
-            finally { if (showProgress) EndTaskProgress(); adbStatusGate.Release(); }
+            finally { adbStatusGate.Release(); }
         }
 
         private void UpdateAdbDetails(AdbStatusInfo state)
         {
             var online = state != null && state.DeviceState == "online";
-            AdbDeviceTypeText.Text = state == null || string.IsNullOrWhiteSpace(state.DeviceType) ? "设备类型未知" : "设备类型：" + state.DeviceType;
-            AdbVersionText.Text = state == null || string.IsNullOrWhiteSpace(state.SoftwareVersion) ? "软件版本未知" : "软件版本：" + state.SoftwareVersion;
-            AdbPortText.Text = state != null && state.PortConnected ? "127.0.0.1:5037" : "--";
-            AdbPortStateText.Text = state != null && state.PortConnected ? "已连接" : "未连接";
-            AdbDeviceStateText.Text = online ? "在线" : GetAdbStateText(state == null ? "no-port" : state.DeviceState);
+            var portConnected = state != null && state.PortConnected;
+            AdbDeviceTypeText.Text = state == null || string.IsNullOrWhiteSpace(state.DeviceType) ? "设备类型：未知" : "设备类型：" + state.DeviceType;
+            var softwareVersion = state == null ? "" : state.SoftwareVersion;
+            AdbVersionText.Text = string.IsNullOrWhiteSpace(softwareVersion) ? "软件版本：未知" : "软件版本：" + softwareVersion;
+            AdbVersionText.ToolTip = "点击复制软件版本";
+            AdbVersionCopyButton.ToolTip = "点击复制软件版本";
+            AdbPortText.Text = portConnected ? "127.0.0.1:5037" : "--";
+            AdbPortStateText.Text = portConnected ? (online ? "在线" : GetAdbStateText(state.DeviceState)) : "ADB 未启动";
             UpdatePartitionDetails(state == null ? null : state.System, AdbSystemTitleText, AdbSystemFreeText, AdbSystemUsageText, AdbSystemProgress, "系统分区", state == null ? "" : GetMountModeText(state.RootFsMode));
             UpdatePartitionDetails(state == null ? null : state.Userdata, AdbUserdataTitleText, AdbUserdataFreeText, AdbUserdataUsageText, AdbUserdataProgress, "用户分区", state == null ? "" : GetMountModeText(state.UserdataFsMode));
         }
@@ -1891,14 +1886,24 @@ namespace WiFitool
             return Path.Combine(parentFolder, imageFallback + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
         }
 
+        private void AdbVersionCopyButton_Click(object sender, RoutedEventArgs e)
+        {
+            CopyAdbVersion();
+        }
+
         private void AdbVersionText_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            CopyAdbVersion();
+            e.Handled = true;
+        }
+
+        private void CopyAdbVersion()
         {
             var version = adbStatus == null ? "" : adbStatus.SoftwareVersion;
             if (string.IsNullOrWhiteSpace(version)) return;
             try { Clipboard.SetText(version); }
             catch { }
             StatusText.Text = "复制软件版本成功";
-            e.Handled = true;
         }
 
         private async Task RunBusyAsync(string message, Func<CancellationToken, Task> action, Action<string> reportStatus = null, Action<Exception> onError = null)

@@ -59,33 +59,26 @@
             </Grid>
           </Button>
           <Popup x:Name="AdbDetailsPopup" PlacementTarget="{Binding ElementName=AdbStatusButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" HorizontalOffset="-42" VerticalOffset="8">
-            <Border Width="300" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="11" Padding="14">
+            <Border MinWidth="300" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="11" Padding="14">
               <Border.Effect><DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.38" Color="#000000" /></Border.Effect>
               <StackPanel>
                 <Grid Margin="0,0,0,10">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions>
                   <StackPanel>
-                    <TextBlock x:Name="AdbDeviceTypeText" Text="设备类型未知" FontSize="14" FontWeight="SemiBold" />
-                    <TextBlock x:Name="AdbVersionText" Text="软件版本未知" Foreground="{DynamicResource TextBrush}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" Cursor="Hand" ToolTip="点击复制软件版本" MouseLeftButtonUp="AdbVersionText_MouseLeftButtonUp" />
-                  </StackPanel>
-                  <StackPanel Grid.Column="1" Width="70" HorizontalAlignment="Right">
-                    <Button x:Name="AdbRefreshButton" Content="刷新状态" Click="AdbRefreshButton_Click" Height="34" Width="70" MinWidth="70" MaxWidth="70" Padding="2,4" Margin="0" HorizontalAlignment="Right" HorizontalContentAlignment="Center" />
-                    <Button x:Name="AdbRebootButton" Content="重启设备" Click="AdbRebootButton_Click" Height="34" Width="70" MinWidth="70" MaxWidth="70" Padding="2,4" Margin="0,6,0,0" HorizontalAlignment="Right" HorizontalContentAlignment="Center" />
+                    <TextBlock x:Name="AdbDeviceTypeText" Text="设备类型：未知" Foreground="{DynamicResource TextBrush}" FontSize="11" />
+                    <StackPanel Margin="0,2,0,0" Orientation="Horizontal" VerticalAlignment="Center">
+                      <TextBlock x:Name="AdbVersionText" Text="软件版本：未知" Foreground="{DynamicResource TextBrush}" FontSize="11" TextWrapping="NoWrap" VerticalAlignment="Center" Cursor="Hand" ToolTip="点击复制软件版本" ToolTipService.InitialShowDelay="0" MouseLeftButtonUp="AdbVersionText_MouseLeftButtonUp" />
+                      <Button x:Name="AdbVersionCopyButton" Content="⧉" Click="AdbVersionCopyButton_Click" Style="{StaticResource QuietButton}" Width="24" Height="24" MinWidth="24" Padding="0,0,0,4" Margin="6,0,0,0" FontSize="14" FontWeight="Normal" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" VerticalAlignment="Center" ToolTip="复制软件版本" ToolTipService.InitialShowDelay="0" />
+                    </StackPanel>
                   </StackPanel>
                 </Grid>
                 <Border Height="1" Background="{DynamicResource BorderBrush}" />
                 <Grid Margin="0,11,0,0">
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                  <TextBlock Text="ADB 服务端口" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                  <TextBlock Text="ADB状态" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
                   <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <TextBlock x:Name="AdbPortText" Text="127.0.0.1:5037" FontSize="11" Margin="0,0,8,0" />
-                    <TextBlock x:Name="AdbPortStateText" Text="未连接" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold" FontSize="11" MinWidth="42" TextAlignment="Right" />
+                    <TextBlock x:Name="AdbPortText" Text="--" FontSize="11" Margin="0,0,8,0" />
+                    <TextBlock x:Name="AdbPortStateText" Text="ADB 未启动" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold" FontSize="11" MinWidth="42" TextAlignment="Right" />
                   </StackPanel>
-                </Grid>
-                <Grid Margin="0,12,0,0">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                  <TextBlock Text="设备状态" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
-                  <TextBlock Grid.Column="1" x:Name="AdbDeviceStateText" Text="未连接" FontWeight="SemiBold" FontSize="11" />
                 </Grid>
                 <Grid Margin="0,12,0,0">
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -417,6 +410,8 @@
               <ComboBoxItem Content="Debug" Tag="Debug" />
             </ComboBox>
             <Button x:Name="ClearLogButton" Content="清空日志" Click="ClearLogButton_Click" Style="{StaticResource QuietButton}" Height="28" Padding="8,2" Margin="4,0,0,0" ToolTip="清空已保存的运行日志" />
+            <Border Width="1" Height="16" Background="{DynamicResource BorderBrush}" Margin="12,0" />
+            <Button x:Name="DeviceRebootButton" Content="重启设备" Click="DeviceRebootButton_Click" Style="{StaticResource QuietButton}" Height="28" Padding="8,2" Margin="0" IsEnabled="False" ToolTip="重启当前 ADB 设备" />
             <Border Width="1" Height="16" Background="{DynamicResource BorderBrush}" Margin="12,0" />
             <Button x:Name="CheckUpdateButton" Content="检查更新" Click="CheckUpdateButton_Click" Style="{StaticResource QuietButton}" Height="28" Padding="8,2" Margin="0" ToolTip="检查最新版本" />
           </StackPanel>
