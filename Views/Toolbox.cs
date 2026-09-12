@@ -12,7 +12,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Win32;
@@ -536,15 +535,14 @@ namespace WiFitool
             Grid.SetRow(note, 1); form.Children.Add(note);
 
             var replacePath = new TextBox { IsReadOnly = true, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "要覆盖的本地文件，路径不能包含中文字符" };
-            var replaceTarget = new TextBox { IsReadOnly = true, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "选择设备目录后自动使用本地文件名" };
+            var replaceTarget = new TextBox { Text = "/etc/", VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "输入设备文件绝对路径，例如 /etc/rc" };
             var chooseFile = new Button { Content = "选择文件", Width = 88, MinWidth = 88, Margin = new Thickness(8, 0, 0, 0) };
-            var chooseDirectory = new Button { Content = "选择目录", Width = 88, MinWidth = 88, Margin = new Thickness(8, 0, 0, 0) };
-            var replaceStart = new Button { Content = "开始覆盖", Style = (Style)FindResource("PrimaryButton"), Width = 88, MinWidth = 88, Margin = new Thickness(0, 12, 0, 0) };
-            var replaceSection = CreateInfiniteRebootSection("覆盖文件", "选择本地文件和设备目录，自动拼接同名目标文件。目标文件需要已经存在。", replacePath, replaceTarget, chooseFile, chooseDirectory, replaceStart, "本地文件", "设备路径");
+            var replaceStart = new Button { Content = "开始覆盖", Style = (Style)FindResource("PrimaryButton"), Width = 88, MinWidth = 88, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            var replaceSection = CreateInfiniteRebootSection("覆盖文件", "选择本地文件并输入设备文件路径。目标文件需要已经存在。", replacePath, replaceTarget, chooseFile, replaceStart, "本地文件", "设备路径");
             Grid.SetRow(replaceSection, 2); form.Children.Add(replaceSection);
 
-            var deleteTarget = new TextBox { VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "输入设备上的文件绝对路径，例如 /system/example/file" };
-            var deleteStart = new Button { Content = "开始删除", Style = (Style)FindResource("PrimaryButton"), Width = 88, MinWidth = 88, Margin = new Thickness(0, 12, 0, 0) };
+            var deleteTarget = new TextBox { Text = "/sbin/atweb", VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "输入设备上的文件绝对路径，例如 /system/example/file" };
+            var deleteStart = new Button { Content = "开始删除", Style = (Style)FindResource("PrimaryButton"), Width = 88, MinWidth = 88, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
             var deleteSection = CreateInfiniteRebootDeleteSection(deleteTarget, deleteStart);
             Grid.SetRow(deleteSection, 3); form.Children.Add(deleteSection);
 
@@ -559,15 +557,6 @@ namespace WiFitool
             border.Child = form; window.Content = border;
 
             var operationRunning = false;
-            var replaceDirectory = "";
-            Action updateReplaceTarget = delegate
-            {
-                if (string.IsNullOrWhiteSpace(replaceDirectory) || !File.Exists(replacePath.Text.Trim())) { replaceTarget.Clear(); return; }
-                var fileName = Path.GetFileName(replacePath.Text.Trim());
-                var combined = replaceDirectory == "/" ? "/" + fileName : replaceDirectory.TrimEnd('/') + "/" + fileName;
-                try { replaceTarget.Text = adbService.NormalizeDevicePath(combined); }
-                catch { replaceTarget.Clear(); }
-            };
             Action closeWindow = delegate
             {
                 if (operationRunning) { state.Text = "任务正在执行，请先点击“停止”。"; return; }
@@ -588,20 +577,13 @@ namespace WiFitool
                 if (dialog.ShowDialog(window) == true)
                 {
                     replacePath.Text = dialog.FileName;
-                    updateReplaceTarget();
+                    if (replaceTarget.Text.TrimEnd().EndsWith("/", StringComparison.Ordinal))
+                    {
+                        var directory = replaceTarget.Text.Trim().TrimEnd('/');
+                        replaceTarget.Text = (directory.Length == 0 ? "/" : directory + "/") + Path.GetFileName(dialog.FileName);
+                    }
                     if (ContainsChineseCharacters(dialog.FileName)) state.Text = "提示：本地文件路径不能包含中文字符，请将文件移到纯英文路径后再选择。";
                 }
-            };
-            chooseDirectory.Click += async delegate
-            {
-                if (operationRunning) { state.Text = "任务正在执行，请先点击“停止”。"; return; }
-                var serial = await FindInfiniteRebootPickerSerialAsync(state);
-                if (string.IsNullOrWhiteSpace(serial)) return;
-                var directory = ShowDevicePathPicker(window, serial, true);
-                if (directory == null) return;
-                replaceDirectory = directory;
-                updateReplaceTarget();
-                state.Text = "已选择设备目录：" + directory + (string.IsNullOrWhiteSpace(replaceTarget.Text) ? "，请先选择本地文件。" : "");
             };
             stop.Click += delegate
             {
@@ -618,7 +600,7 @@ namespace WiFitool
                 string target;
                 try { target = adbService.NormalizeDevicePath(replaceTarget.Text.Trim()); }
                 catch (Exception ex) { state.Text = ex.Message; return; }
-            if (target == "/") { state.Text = "设备路径必须是文件绝对路径。"; return; }
+                if (target == "/" || replaceTarget.Text.TrimEnd().EndsWith("/", StringComparison.Ordinal)) { state.Text = "设备路径必须是文件绝对路径，请补充文件名。"; return; }
                 if (activeCancellation != null) { state.Text = "请等待当前操作完成。"; return; }
                 operationRunning = true;
                 try { await RunInfiniteRebootToolOperationAsync(window, state, replaceStart, deleteStart, stop, close, closeBottom, "覆盖", delegate(string serial, CancellationToken token) { return adbService.ReplaceRemoteFileQuickAsync(serial, target, local, token); }); }
@@ -640,11 +622,10 @@ namespace WiFitool
             window.ShowDialog();
         }
 
-        private Border CreateInfiniteRebootSection(string title, string description, TextBox localPath, TextBox targetPath, Button chooseFile, Button chooseDirectory, Button start, string localLabel, string targetLabel)
+        private Border CreateInfiniteRebootSection(string title, string description, TextBox localPath, TextBox targetPath, Button chooseFile, Button start, string localLabel, string targetLabel)
         {
             var border = new Border { Background = (Brush)FindResource("PanelAltBrush"), BorderBrush = (Brush)FindResource("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14), Margin = new Thickness(0, 0, 0, 10) };
             var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -667,11 +648,8 @@ namespace WiFitool
             targetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             targetGrid.Children.Add(new TextBlock { Text = targetLabel, Foreground = (Brush)FindResource("MutedBrush"), VerticalAlignment = VerticalAlignment.Center });
             Grid.SetColumn(targetPath, 1); targetGrid.Children.Add(targetPath);
-            Grid.SetColumn(chooseDirectory, 2); targetGrid.Children.Add(chooseDirectory);
+            Grid.SetColumn(start, 2); targetGrid.Children.Add(start);
             Grid.SetRow(targetGrid, 3); grid.Children.Add(targetGrid);
-            var action = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            action.Children.Add(start);
-            Grid.SetRow(action, 4); grid.Children.Add(action);
             border.Child = grid;
             return border;
         }
@@ -683,7 +661,6 @@ namespace WiFitool
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var heading = new TextBlock { Text = "删除设备文件", FontSize = 14, FontWeight = FontWeights.SemiBold };
             Grid.SetRow(heading, 0); grid.Children.Add(heading);
             var note = new TextBlock { Text = "输入要删除的设备文件绝对路径。只删除普通文件，不删除目录。", Foreground = (Brush)FindResource("MutedBrush"), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 10) };
@@ -691,174 +668,13 @@ namespace WiFitool
             var targetGrid = new Grid();
             targetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
             targetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            targetGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             targetGrid.Children.Add(new TextBlock { Text = "设备路径", Foreground = (Brush)FindResource("MutedBrush"), VerticalAlignment = VerticalAlignment.Center });
             Grid.SetColumn(targetPath, 1); targetGrid.Children.Add(targetPath);
+            Grid.SetColumn(start, 2); targetGrid.Children.Add(start);
             Grid.SetRow(targetGrid, 2); grid.Children.Add(targetGrid);
-            var action = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            action.Children.Add(start);
-            Grid.SetRow(action, 3); grid.Children.Add(action);
             border.Child = grid;
             return border;
-        }
-
-        private async Task<string> FindInfiniteRebootPickerSerialAsync(TextBlock state)
-        {
-            try
-            {
-                var serial = await adbService.FindOnlineSerialAsync(CancellationToken.None);
-                if (!string.IsNullOrWhiteSpace(serial)) return serial;
-                state.Text = "选择设备路径需要设备暂时在线，请在设备启动间隙再点击选择按钮。";
-            }
-            catch (Exception ex) { state.Text = "读取在线设备失败：" + ShortRebootError(ex); }
-            return "";
-        }
-
-        private string ShowDevicePathPicker(Window owner, string serial, bool selectDirectory)
-        {
-            var window = new Window
-            {
-                Owner = owner,
-                Title = selectDirectory ? "选择设备目录" : "选择设备文件",
-                Width = 620,
-                Height = 500,
-                MinWidth = 520,
-                MinHeight = 420,
-                ResizeMode = ResizeMode.CanResize,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                WindowStyle = WindowStyle.None,
-                AllowsTransparency = true,
-                Background = Brushes.Transparent,
-                ShowInTaskbar = false,
-                Icon = Icon
-            };
-            var border = new Border { Background = (Brush)FindResource("PanelBrush"), BorderBrush = (Brush)FindResource("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(20) };
-            border.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 22, ShadowDepth = 5, Opacity = 0.42, Color = Colors.Black };
-            var form = new Grid();
-            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            form.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            var header = new Grid { Margin = new Thickness(0, 0, 0, 14) };
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            header.Children.Add(new TextBlock { Text = selectDirectory ? "选择设备目录" : "选择设备文件", FontSize = 17, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-            var close = new Button { Content = "×", Width = 30, Height = 30, Padding = new Thickness(0), Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 18 };
-            Grid.SetColumn(close, 1); header.Children.Add(close);
-            Grid.SetRow(header, 0); form.Children.Add(header);
-
-            var pathGrid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
-            pathGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            pathGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            pathGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            pathGrid.Children.Add(new TextBlock { Text = "当前路径", Foreground = (Brush)FindResource("MutedBrush"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) });
-            var currentPathBox = new TextBox { IsReadOnly = true, Height = 34, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "当前设备目录" };
-            Grid.SetColumn(currentPathBox, 1); pathGrid.Children.Add(currentPathBox);
-            var up = new Button { Content = "↑ 上级目录", Style = (Style)FindResource("CompactButton"), Margin = new Thickness(8, 0, 0, 0), ToolTip = "返回上级目录" };
-            Grid.SetColumn(up, 2); pathGrid.Children.Add(up);
-            Grid.SetRow(pathGrid, 1); form.Children.Add(pathGrid);
-
-            var list = new ListView { MinHeight = 260, Background = (Brush)FindResource("PanelAltBrush"), BorderBrush = (Brush)FindResource("BorderBrush"), BorderThickness = new Thickness(1), ToolTip = selectDirectory ? "双击目录进入" : "双击目录进入，选择文件后确认" };
-            var itemTemplate = new DataTemplate();
-            var itemPanel = new FrameworkElementFactory(typeof(StackPanel));
-            itemPanel.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
-            var itemIcon = new FrameworkElementFactory(typeof(TextBlock));
-            itemIcon.SetBinding(TextBlock.TextProperty, new Binding("Icon"));
-            itemIcon.SetValue(FrameworkElement.WidthProperty, 28.0);
-            itemIcon.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-            var itemName = new FrameworkElementFactory(typeof(TextBlock));
-            itemName.SetBinding(TextBlock.TextProperty, new Binding("Name"));
-            itemName.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
-            itemName.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-            itemPanel.AppendChild(itemIcon); itemPanel.AppendChild(itemName); itemTemplate.VisualTree = itemPanel;
-            list.ItemTemplate = itemTemplate;
-            Grid.SetRow(list, 2); form.Children.Add(list);
-
-            var state = new TextBlock { Text = "正在读取设备目录…", Foreground = (Brush)FindResource("MutedBrush"), TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 10, 0, 0), MinHeight = 32 };
-            Grid.SetRow(state, 3); form.Children.Add(state);
-
-            var cancel = new Button { Content = "取消", IsCancel = true, Margin = new Thickness(0, 10, 8, 0) };
-            var choose = new Button { Content = selectDirectory ? "选择当前目录" : "选择文件", Style = (Style)FindResource("PrimaryButton"), IsDefault = true, IsEnabled = false, Margin = new Thickness(0, 10, 0, 0) };
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            buttons.Children.Add(cancel); buttons.Children.Add(choose);
-            Grid.SetRow(buttons, 4); form.Children.Add(buttons);
-            border.Child = form; window.Content = border;
-
-            var currentPath = "/";
-            WorkspaceEntry selectedEntry = null;
-            var loading = false;
-            var loaded = false;
-            var loadingCancellation = new CancellationTokenSource();
-            Func<Task> loadDirectory = async delegate
-            {
-                if (loading) return;
-                loading = true;
-                loaded = false;
-                selectedEntry = null;
-                choose.IsEnabled = false;
-                up.IsEnabled = false;
-                state.Text = "正在读取设备目录：" + currentPath;
-                try
-                {
-                    var entries = await adbService.ListDirectoryAsync(serial, currentPath, loadingCancellation.Token);
-                    list.ItemsSource = entries;
-                    currentPathBox.Text = currentPath;
-                    loaded = true;
-                    choose.IsEnabled = selectDirectory;
-                    state.Text = entries.Count == 0 ? "当前目录为空。" : (selectDirectory ? "双击目录进入，或选择当前目录。" : "双击目录进入，选择文件后确认。");
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex)
-                {
-                    list.ItemsSource = null;
-                    state.Text = "读取设备目录失败：" + ShortRebootError(ex);
-                }
-                finally
-                {
-                    loading = false;
-                    up.IsEnabled = currentPath != "/";
-                    if (loaded) choose.IsEnabled = selectDirectory || (selectedEntry != null && selectedEntry.Kind != "目录");
-                }
-            };
-            list.SelectionChanged += delegate
-            {
-                selectedEntry = list.SelectedItem as WorkspaceEntry;
-                if (loaded && !loading) choose.IsEnabled = selectDirectory || (selectedEntry != null && selectedEntry.Kind != "目录");
-            };
-            list.MouseDoubleClick += async delegate
-            {
-                if (loading) return;
-                var entry = list.SelectedItem as WorkspaceEntry;
-                if (entry == null) return;
-                if (entry.Kind == "目录")
-                {
-                    currentPath = entry.Path;
-                    await loadDirectory();
-                    return;
-                }
-                if (!selectDirectory && entry.Kind != "目录") { window.Tag = entry.Path; window.DialogResult = true; }
-            };
-            up.Click += async delegate
-            {
-                if (loading || currentPath == "/") return;
-                var path = currentPath.TrimEnd('/');
-                var separator = path.LastIndexOf('/');
-                currentPath = separator <= 0 ? "/" : path.Substring(0, separator);
-                await loadDirectory();
-            };
-            choose.Click += delegate
-            {
-                if (!loaded) return;
-                if (selectDirectory) { window.Tag = currentPath; window.DialogResult = true; return; }
-                if (selectedEntry != null && selectedEntry.Kind != "目录") { window.Tag = selectedEntry.Path; window.DialogResult = true; }
-            };
-            cancel.Click += delegate { window.Close(); };
-            close.Click += delegate { window.Close(); };
-            window.Closed += delegate { loadingCancellation.Cancel(); loadingCancellation.Dispose(); };
-            window.Loaded += async delegate { await loadDirectory(); };
-            window.ShowDialog();
-            return window.Tag as string;
         }
 
         private async Task RunInfiniteRebootToolOperationAsync(Window window, TextBlock state, Button replaceStart, Button deleteStart, Button stop, Button close, Button closeBottom, string actionName, Func<string, CancellationToken, Task> action)

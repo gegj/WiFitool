@@ -209,7 +209,7 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
               <StackPanel>
                 <TextBlock Text="文件管理" FontSize="23" FontWeight="SemiBold" />
-                <TextBlock Text="浏览本地解包目录或在线设备文件，右键执行编辑和文件操作" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+                <TextBlock Text="浏览本地解包目录或在线设备文件，右键执行编辑和文件操作，支持拖拽文件和文件夹到界面。" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
               </StackPanel>
               <WrapPanel x:Name="FilesActionsPanel" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
                 <Button x:Name="HostsButton" Content="Hosts 管理" Click="HostsButton_Click" IsEnabled="False" />
