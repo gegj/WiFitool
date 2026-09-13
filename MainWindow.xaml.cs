@@ -675,14 +675,9 @@ namespace WiFitool
         {
             if (image == null || workspace == null) return;
             string folder; if (!FolderDialog.TrySelect(this, "选择固件导出文件夹", out folder)) return;
-            var fileName = Path.GetFileNameWithoutExtension(image.Name);
-            if (string.IsNullOrWhiteSpace(fileName)) fileName = "firmware";
-            var extension = Path.GetExtension(image.Name);
-            if (string.IsNullOrWhiteSpace(extension)) extension = ".bin";
-            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            var outputPath = Path.Combine(folder, fileName + "-" + timestamp + extension);
-            if (File.Exists(outputPath) && MessageBox.Show(this, "目标文件已存在，是否覆盖？\n" + outputPath, "确认导出", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-            await RunBusyAsync("正在导出固件…", async token => { foreach (var p in image.Partitions.Where(x => x.Extracted && x.Modified)) await fileSystemService.RepackAsync(p, workspace, token); await workspaceService.ExportAsync(image, workspace, outputPath, token); if (!image.IsStandalone && image.Size <= 8 * 1024 * 1024 && image.Partitions.Any(x => x.Name.Equals("rootfs", StringComparison.OrdinalIgnoreCase))) { var rootfs = image.Partitions.First(x => x.Name.Equals("rootfs", StringComparison.OrdinalIgnoreCase)); await workspaceService.ExportPartitionAsync(outputPath, rootfs, Path.Combine(folder, fileName + "-" + timestamp + "-mtd4-rootfs.bin"), token); } Dispatcher.Invoke(delegate { StatusText.Text = "固件导出完成"; }); });
+            var fileName = ExportNameService.GetBaseName(image.Name, "firmware");
+            var outputPath = Path.Combine(folder, fileName + (image.IsStandalone ? "-mtd4" : "-full") + ".bin");
+            await RunBusyAsync("正在导出固件…", async token => { foreach (var p in image.Partitions.Where(x => x.Extracted && x.Modified)) await fileSystemService.RepackAsync(p, workspace, token); await workspaceService.ExportAsync(image, workspace, outputPath, token); if (!image.IsStandalone && image.Size <= 8 * 1024 * 1024 && image.Partitions.Any(x => x.Name.Equals("rootfs", StringComparison.OrdinalIgnoreCase))) { var rootfs = image.Partitions.First(x => x.Name.Equals("rootfs", StringComparison.OrdinalIgnoreCase)); await workspaceService.ExportPartitionAsync(outputPath, rootfs, Path.Combine(folder, fileName + "-mtd4.bin"), token); } Dispatcher.Invoke(delegate { StatusText.Text = "固件导出完成"; }); });
         }
 
         private void OverviewNav_Click(object sender, RoutedEventArgs e) { SetView(OverviewView); }
@@ -976,7 +971,7 @@ namespace WiFitool
             if (includeRootfs && (rootfs == null || !workspace.ExtractedDirectories.TryGetValue(rootfs.Name, out rootfsPath))) { MessageBox.Show(this, "rootfs 尚未解包，请先解包 rootfs。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             if (includeUserdata && (userdata == null || !userdata.CanExtract)) { MessageBox.Show(this, "userdata 分区不支持自动解包。", "导出系统文件", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             string folder; if (!FolderDialog.TrySelect(this, "选择导出目录", out folder)) return;
-            var target = CreateExportFolder(folder, Path.GetFileNameWithoutExtension(image.Name));
+            var target = Path.Combine(folder, ExportNameService.GetBaseName(image.Name, "firmware"));
             try
             {
                 await RunTaskProgressAsync(async () =>
@@ -1877,13 +1872,6 @@ namespace WiFitool
                 MessageBox.Show(this, "无法确认目标路径写入状态：" + ex.Message, "只读提示", MessageBoxButton.OK, MessageBoxImage.Error);
                 return false;
             }
-        }
-
-        private string CreateExportFolder(string parentFolder, string imageFallback)
-        {
-            if (string.IsNullOrWhiteSpace(imageFallback)) imageFallback = "firmware";
-            foreach (var invalid in Path.GetInvalidFileNameChars()) imageFallback = imageFallback.Replace(invalid, '_');
-            return Path.Combine(parentFolder, imageFallback + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
         }
 
         private void AdbVersionCopyButton_Click(object sender, RoutedEventArgs e)

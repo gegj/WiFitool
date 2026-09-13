@@ -70,7 +70,6 @@ namespace WiFitool.Services
             return Task.Run(delegate
             {
                 var source = Path.GetFullPath(image.Path); var target = Path.GetFullPath(destination);
-                if (string.Equals(source, target, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("导出路径不能覆盖原始镜像。");
                 Directory.CreateDirectory(Path.GetDirectoryName(target)); var temp = target + ".wifitool-tmp-" + Guid.NewGuid().ToString("N");
                 try
                 {

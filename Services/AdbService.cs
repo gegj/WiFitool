@@ -727,9 +727,8 @@ namespace WiFitool.Services
             ValidateSerial(serial);
             var partitions = await ListMtdPartitionsAsync(serial, token);
             Directory.CreateDirectory(folder);
-            var cleanVersion = CleanFileName(string.IsNullOrWhiteSpace(softwareVersion) ? "未知版本" : softwareVersion);
-            var outputPath = Path.Combine(folder, cleanVersion + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".bin");
-            if (File.Exists(outputPath)) throw new IOException("目标镜像已存在，请先移动或删除该文件：" + outputPath);
+            var cleanVersion = ExportNameService.CleanFileName(string.IsNullOrWhiteSpace(softwareVersion) ? "未知版本" : softwareVersion);
+            var outputPath = Path.Combine(folder, cleanVersion + ".bin");
             await ExportMtdPartitionsAsync(serial, partitions, outputPath, token);
             return outputPath;
         }
@@ -798,6 +797,7 @@ namespace WiFitool.Services
                     output.Flush(true);
                 }
                 if (new FileInfo(temporaryPath).Length != imageSize) throw new InvalidDataException("重建后的设备镜像尺寸不正确。");
+                if (File.Exists(destinationPath)) File.Delete(destinationPath);
                 File.Move(temporaryPath, destinationPath);
             }
             finally
@@ -931,7 +931,6 @@ namespace WiFitool.Services
             public long Size;
             public MtdEntry(int number, long size) { Number = number; Size = size; }
         }
-        private static string CleanFileName(string value) { foreach (var c in Path.GetInvalidFileNameChars()) value = value.Replace(c, '_'); return value; }
     }
 }
 
