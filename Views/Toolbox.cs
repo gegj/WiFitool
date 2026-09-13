@@ -14,6 +14,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using WiFitool.Models;
 using WiFitool.Services;
@@ -23,6 +24,8 @@ namespace WiFitool
     public partial class MainWindow
     {
         private readonly ToolboxService toolboxService = new ToolboxService();
+        private readonly NetworkDebugService networkDebugService = new NetworkDebugService();
+        private const int AdbSettingsRequestTimeoutMilliseconds = 3000;
         private readonly List<ToolboxItem> toolboxItems = new List<ToolboxItem>();
         private readonly Dictionary<string, ImageSource> toolboxIcons = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
         private readonly List<Button> toolboxTabs = new List<Button>();
@@ -450,6 +453,9 @@ namespace WiFitool
                                     break;
                                 }
                             }
+                            catch (TimeoutException ex) { throw new InvalidOperationException("连接设备超时，请检查 IP 和网络连接。", ex); }
+                            catch (SocketException ex) { throw new InvalidOperationException("无法连接设备，请检查 IP 和网络连接。", ex); }
+                            catch (IOException ex) { throw new InvalidOperationException("设备网络请求失败，请检查 IP 和网络连接。", ex); }
                             catch (Exception ex) { LogService.Instance.Debug("ADBSettings", "设备接口请求失败：" + path, ex); }
                         }
                         if (successPath == null)
@@ -460,12 +466,28 @@ namespace WiFitool
                     }
                     else
                     {
+                        var disableRequestSent = false;
                         foreach (var path in paths)
                         {
                             try
                             {
                                 LogService.Instance.Debug("ADBSettings", "发送关闭 ADB 接口：" + path);
-                                await SendRawHttpGetAsync(address.ToString(), path, token, null);
+                                disableRequestSent = await SendRawHttpGetAsync(address.ToString(), path, token, null);
+                            }
+                            catch (TimeoutException ex)
+                            {
+                                if (!disableRequestSent) throw new InvalidOperationException("连接设备超时，请检查 IP 和网络连接。", ex);
+                                LogService.Instance.Warn("ADBSettings", "关闭 ADB 接口请求超时：" + path, ex);
+                            }
+                            catch (SocketException ex)
+                            {
+                                if (!disableRequestSent) throw new InvalidOperationException("无法连接设备，请检查 IP 和网络连接。", ex);
+                                LogService.Instance.Warn("ADBSettings", "关闭 ADB 接口连接失败：" + path, ex);
+                            }
+                            catch (IOException ex)
+                            {
+                                if (!disableRequestSent) throw new InvalidOperationException("设备网络请求失败，请检查 IP 和网络连接。", ex);
+                                LogService.Instance.Warn("ADBSettings", "关闭 ADB 接口请求失败：" + path, ex);
                             }
                             catch (Exception ex) { LogService.Instance.Warn("ADBSettings", "关闭 ADB 接口请求失败：" + path, ex); }
                         }
@@ -496,6 +518,44 @@ namespace WiFitool
                 closeButton.IsEnabled = true;
                 ip.IsEnabled = true;
             }
+        }
+
+        private async Task<bool> RunNetworkDebugActionAsync(TextBox ip, TextBlock state, Button debugButton, Button enableButton, Button disableButton, Button closeButton)
+        {
+            if (activeCancellation != null) { SetAdbSettingsStatus(state, "请等待当前操作完成。"); return false; }
+
+            IPAddress address;
+            var value = ip.Text.Trim();
+            if (!IPAddress.TryParse(value, out address) || address.AddressFamily != AddressFamily.InterNetwork)
+            {
+                SetAdbSettingsStatus(state, "请输入有效的设备 IPv4 地址。");
+                return false;
+            }
+
+            debugButton.IsEnabled = false;
+            enableButton.IsEnabled = false;
+            disableButton.IsEnabled = false;
+            closeButton.IsEnabled = false;
+            ip.IsEnabled = false;
+            var completed = false;
+            try
+            {
+                LogService.Instance.Info("NetworkDebug", "开启调试，设备地址 " + address);
+                await RunBusyAsync("正在开启调试…", async token =>
+                {
+                    await networkDebugService.EnableDebugAndRebootAsync(address.ToString(), token, message => SetAdbSettingsStatus(state, message));
+                    completed = true;
+                }, message => state.Text = message, delegate(Exception ex) { state.Text = "操作失败：" + ex.Message; });
+            }
+            finally
+            {
+                debugButton.IsEnabled = true;
+                enableButton.IsEnabled = true;
+                disableButton.IsEnabled = true;
+                closeButton.IsEnabled = true;
+                ip.IsEnabled = true;
+            }
+            return completed;
         }
 
         private void ShowInfiniteRebootRepairDialog()
@@ -763,22 +823,52 @@ namespace WiFitool
             LogService.Instance.Debug("HTTP", "请求设备接口 " + host + path);
             using (var client = new TcpClient())
             {
-                await client.ConnectAsync(host, 80);
+                client.SendTimeout = AdbSettingsRequestTimeoutMilliseconds;
+                client.ReceiveTimeout = AdbSettingsRequestTimeoutMilliseconds;
+                await WaitForNetworkTaskAsync(client.ConnectAsync(host, 80), token, "连接设备超时。");
                 using (var stream = client.GetStream())
-                using (var writer = new StreamWriter(stream, System.Text.Encoding.ASCII, 1024, true) { NewLine = "\r\n", AutoFlush = true })
                 {
-                    await writer.WriteAsync("GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+                    stream.WriteTimeout = AdbSettingsRequestTimeoutMilliseconds;
+                    stream.ReadTimeout = AdbSettingsRequestTimeoutMilliseconds;
+                    var request = System.Text.Encoding.ASCII.GetBytes("GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+                    await WaitForNetworkTaskAsync(stream.WriteAsync(request, 0, request.Length), token, "发送设备请求超时。");
+                    if (string.IsNullOrEmpty(successMarker))
+                    {
+                        LogService.Instance.Debug("HTTP", "设备接口请求已发送，不等待响应正文");
+                        return true;
+                    }
+
                     using (var reader = new StreamReader(stream, System.Text.Encoding.ASCII))
                     {
-                        var response = await reader.ReadToEndAsync();
-                        var success = string.IsNullOrEmpty(successMarker) || response.IndexOf(successMarker, StringComparison.OrdinalIgnoreCase) >= 0;
-                        LogService.Instance.Debug("HTTP", string.IsNullOrEmpty(successMarker)
-                            ? "设备接口请求已完成，不判断响应正文"
-                            : "设备接口响应结果：" + success + "，匹配标记 " + successMarker);
+                        var response = await WaitForNetworkTaskAsync(reader.ReadToEndAsync(), token, "读取设备响应超时。");
+                        var success = response.IndexOf(successMarker, StringComparison.OrdinalIgnoreCase) >= 0;
+                        LogService.Instance.Debug("HTTP", "设备接口响应结果：" + success + "，匹配标记 " + successMarker);
                         return success;
                     }
                 }
             }
+        }
+
+        private static async Task WaitForNetworkTaskAsync(Task task, CancellationToken token, string timeoutMessage)
+        {
+            var delay = Task.Delay(AdbSettingsRequestTimeoutMilliseconds, token);
+            if (await Task.WhenAny(task, delay) != task)
+            {
+                token.ThrowIfCancellationRequested();
+                throw new TimeoutException(timeoutMessage);
+            }
+            await task;
+        }
+
+        private static async Task<T> WaitForNetworkTaskAsync<T>(Task<T> task, CancellationToken token, string timeoutMessage)
+        {
+            var delay = Task.Delay(AdbSettingsRequestTimeoutMilliseconds, token);
+            if (await Task.WhenAny(task, delay) != task)
+            {
+                token.ThrowIfCancellationRequested();
+                throw new TimeoutException(timeoutMessage);
+            }
+            return await task;
         }
 
         private void ShowAdbSettingsDialog()
@@ -799,7 +889,7 @@ namespace WiFitool
             var close = new Button { Content = "×", Width = 30, Height = 30, Padding = new Thickness(0), Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 18 };
             Grid.SetColumn(close, 1); header.Children.Add(close);
             Grid.SetRow(header, 0); form.Children.Add(header);
-            var hint = new TextBlock { Text = "通过设备 Web 接口开启或关闭调试模式，设备可能会自动重启。操作完成后窗口仍会保持显示。", Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
+            var hint = new TextBlock { Text = "通过设备 Web 接口开启或关闭调试模式，设备可能会自动重启。操作完成后窗口仍会保持显示。开启调试仅支持：新版 30P/32/REMO", Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
             Grid.SetRow(hint, 1); form.Children.Add(hint);
             var ip = new TextBox { Text = "192.168.0.1", MinWidth = 260, Height = 32, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "设备管理 IP 地址" };
             var fields = new Grid(); fields.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); fields.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -809,9 +899,60 @@ namespace WiFitool
             Grid.SetRow(state, 3); form.Children.Add(state);
             var enable = new Button { Content = "开启 ADB", Style = (Style)FindResource("PrimaryButton"), IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
             var disable = new Button { Content = "关闭 ADB", Margin = new Thickness(0, 0, 8, 0) };
+            var debugEnable = new Button { Content = "开启调试" };
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
-            buttons.Children.Add(enable); buttons.Children.Add(disable); Grid.SetRow(buttons, 4); form.Children.Add(buttons); border.Child = form; window.Content = border;
+            buttons.Children.Add(enable); buttons.Children.Add(disable); buttons.Children.Add(debugEnable); Grid.SetRow(buttons, 4); form.Children.Add(buttons); border.Child = form; window.Content = border;
             var operationRunning = false;
+            var userEditedIp = false;
+            var writingAutoIp = false;
+            var pickingIp = false;
+            var lastRndisCandidates = "";
+            var ipTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            Action updateIp = delegate
+            {
+                if (operationRunning || pickingIp) return;
+                List<string> candidates;
+                try { candidates = GetRndisDeviceIps(); }
+                catch { return; }
+                var signature = string.Join("|", candidates.ToArray());
+                var candidatesChanged = signature != lastRndisCandidates;
+                lastRndisCandidates = signature;
+                if (candidatesChanged && candidates.Count > 0) userEditedIp = false;
+                if (userEditedIp && !candidatesChanged) return;
+                if (candidates.Count == 1)
+                {
+                    if (!candidatesChanged && string.Equals(ip.Text.Trim(), candidates[0], StringComparison.OrdinalIgnoreCase)) return;
+                    writingAutoIp = true;
+                    try { ip.Text = candidates[0]; }
+                    finally { writingAutoIp = false; }
+                    userEditedIp = false;
+                    state.Text = "已自动获取设备 IP：" + candidates[0];
+                    return;
+                }
+                if (candidates.Count > 1)
+                {
+                    state.Text = "检测到多个 USB/RNDIS 网卡，正在选择设备 IP…";
+                    pickingIp = true;
+                    try
+                    {
+                        var selected = SelectRndisIp(window, candidates);
+                        if (!string.IsNullOrWhiteSpace(selected))
+                        {
+                            writingAutoIp = true;
+                            try { ip.Text = selected; }
+                            finally { writingAutoIp = false; }
+                            state.Text = "已自动获取设备 IP：" + selected;
+                        }
+                        else state.Text = "未选择设备 IP，可手动输入。";
+                    }
+                    finally { pickingIp = false; }
+                }
+            };
+            ip.TextChanged += delegate { if (!writingAutoIp) userEditedIp = true; };
+            NetworkAddressChangedEventHandler networkChanged = delegate
+            {
+                if (window.IsVisible) window.Dispatcher.BeginInvoke(updateIp);
+            };
             Action closeWindow = delegate
             {
                 if (operationRunning) { SetAdbSettingsStatus(state, "任务正在执行，请等待完成。"); return; }
@@ -824,6 +965,9 @@ namespace WiFitool
                 e.Cancel = true;
                 SetAdbSettingsStatus(state, "任务正在执行，请等待完成。");
             };
+            window.Loaded += delegate { updateIp(); ipTimer.Start(); };
+            window.Loaded += delegate { NetworkChange.NetworkAddressChanged += networkChanged; };
+            window.Closed += delegate { ipTimer.Stop(); NetworkChange.NetworkAddressChanged -= networkChanged; };
             enable.Click += async delegate
             {
                 if (operationRunning) return;
@@ -838,7 +982,53 @@ namespace WiFitool
                 try { await RunAdbSettingsActionAsync(ip, state, enable, disable, close, false); }
                 finally { operationRunning = false; }
             };
+            debugEnable.Click += async delegate
+            {
+                if (operationRunning) return;
+                operationRunning = true;
+                try
+                {
+                    await RunNetworkDebugActionAsync(ip, state, debugEnable, enable, disable, close);
+                }
+                finally { operationRunning = false; }
+            };
             window.ShowDialog();
+        }
+
+        private static List<string> GetRndisDeviceIps()
+        {
+            var keywords = new[] { "RNDIS", "Remote NDIS", "USB Ethernet" };
+            return NetworkInterface.GetAllNetworkInterfaces()
+                .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up && keywords.Any(keyword =>
+                    (adapter.Name ?? "").IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    (adapter.Description ?? "").IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0))
+                .SelectMany(adapter => adapter.GetIPProperties().GatewayAddresses)
+                .Select(gateway => gateway.Address)
+                .Where(address => address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.Any) && !address.Equals(IPAddress.Broadcast) && !address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+                .Select(address => address.ToString())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(address => address, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string SelectRndisIp(Window owner, IList<string> candidates)
+        {
+            var dialog = new Window { Owner = owner, Title = "选择设备 IP", Width = 390, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent, ShowInTaskbar = false };
+            var border = new Border { Background = (Brush)owner.FindResource("PanelBrush"), BorderBrush = (Brush)owner.FindResource("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(20) };
+            border.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 22, ShadowDepth = 5, Opacity = 0.42, Color = Colors.Black };
+            var form = new StackPanel();
+            form.Children.Add(new TextBlock { Text = "检测到多个 USB/RNDIS 网卡，请选择设备 IP。", Foreground = (Brush)owner.FindResource("MutedBrush"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
+            var list = new ComboBox { ItemsSource = candidates, SelectedIndex = 0, Height = 32, VerticalContentAlignment = VerticalAlignment.Center };
+            form.Children.Add(list);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
+            var cancel = new Button { Content = "取消", Width = 82, Height = 34, Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
+            var confirm = new Button { Content = "确定", Width = 82, Height = 34, IsDefault = true, Style = (Style)owner.FindResource("PrimaryButton") };
+            string selected = null;
+            cancel.Click += delegate { dialog.Close(); };
+            confirm.Click += delegate { selected = list.SelectedItem as string; dialog.Close(); };
+            buttons.Children.Add(cancel); buttons.Children.Add(confirm); form.Children.Add(buttons);
+            border.Child = form; dialog.Content = border; dialog.ShowDialog();
+            return selected;
         }
 
         private void SetAdbSettingsStatus(TextBlock state, string message)
