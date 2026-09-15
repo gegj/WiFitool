@@ -706,6 +706,7 @@ namespace WiFitool
         private async void DomainWriteDeviceButton_Click(object sender, RoutedEventArgs e) { await RewriteCheckedDomainsAsync(false, true); }
         private void DomainScanGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) { UpdateDomainRewriteButtonState(); }
         private void DomainCopyMenu_Click(object sender, RoutedEventArgs e) { var item = DomainScanGrid.SelectedItem as DomainScanResult; if (item != null) Clipboard.SetText(item.Address); }
+        private void DomainCopyPathMenu_Click(object sender, RoutedEventArgs e) { var item = DomainScanGrid.SelectedItem as DomainScanResult; if (item != null && !string.IsNullOrWhiteSpace(item.FilePath)) try { Clipboard.SetText(item.FilePath); } catch { } }
         private async void DomainRewriteMenu_Click(object sender, RoutedEventArgs e) { await RewriteCurrentDomainAsync(false); }
         private async void DomainWriteDeviceMenu_Click(object sender, RoutedEventArgs e) { await RewriteCurrentDomainAsync(true); }
         private void DomainScanContextMenu_Opened(object sender, RoutedEventArgs e)
@@ -1274,7 +1275,7 @@ namespace WiFitool
 
         private ContextMenu CreateFileMenu()
         {
-            var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var rename = new MenuItem { Header = "重命名" }; var copyName = new MenuItem { Header = "复制文件名" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
+            var menu = new ContextMenu(); var edit = new MenuItem { Header = "编辑" }; var permissions = new MenuItem { Header = "编辑权限" }; var rename = new MenuItem { Header = "重命名" }; var copyName = new MenuItem { Header = "复制文件名" }; var copyPath = new MenuItem { Header = "复制路径" }; var uploadNew = new MenuItem { Header = "上传文件" }; var uploadFolder = new MenuItem { Header = "上传文件夹" }; var newDirectory = new MenuItem { Header = "新建目录" }; var download = new MenuItem { Header = "下载" }; var delete = new MenuItem { Header = "删除" }; var refresh = new MenuItem { Header = "刷新" };
             edit.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && entry.Kind != "目录" && entry.Kind != "符号链接") { if (adbMode) await EditAdbFileAsync(entry); else FileGrid_MouseDoubleClick(null, null); } };
             permissions.Click += async delegate
             {
@@ -1332,6 +1333,7 @@ namespace WiFitool
                 catch (Exception ex) { MessageBox.Show(this, ex.Message, "重命名失败", MessageBoxButton.OK, MessageBoxImage.Error); }
             };
             copyName.Click += delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null) try { Clipboard.SetText(entry.Name); } catch { } };
+            copyPath.Click += delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; if (entry != null && !string.IsNullOrWhiteSpace(entry.Path)) try { Clipboard.SetText(entry.Path); } catch { } };
             uploadNew.Click += async delegate { var directory = GetUploadDirectory(); if (adbMode && !await EnsureAdbPathWritableAsync(directory, "上传文件")) return; var dialog = new OpenFileDialog { Title = "选择要上传的文件" }; if (dialog.ShowDialog() == true) await UploadSourcesAsync(new[] { dialog.FileName }, directory); };
             uploadFolder.Click += async delegate { var directory = GetUploadDirectory(); if (adbMode && !await EnsureAdbPathWritableAsync(directory, "上传文件夹")) return; string folder; if (FolderDialog.TrySelect(this, "选择要上传的文件夹", out folder)) await UploadSourcesAsync(new[] { folder }, directory); };
             newDirectory.Click += async delegate { var entry = FileGrid.SelectedItem as WorkspaceEntry; var directory = entry == null ? currentDirectory : entry.Kind == "目录" ? entry.Path : currentDirectory; if (adbMode && !await EnsureAdbPathWritableAsync(directory, "新建目录")) return; var name = Prompt("新建目录", "目录名称："); if (string.IsNullOrWhiteSpace(name)) return; try { if (adbMode) { if (MessageBox.Show(this, "确认在设备目录创建：" + directory + "/" + name + "？", "确认创建", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return; await RunTaskProgressAsync(async () => { await adbService.CreateDirectoryAsync(adbSerial, directory, name, CancellationToken.None); await LoadAdbFilesAsyncTask(); }); } else { await RunTaskProgressAsync(() => fileService.CreateDirectoryAsync(currentRoot, directory, name)); var p = image.Partitions.FirstOrDefault(x => x.Name == selectedPartitionName); if (p != null) p.Modified = true; LoadFiles(); } } catch (Exception ex) { MessageBox.Show(this, ex.Message, "创建目录失败", MessageBoxButton.OK, MessageBoxImage.Error); } };
@@ -1369,7 +1371,7 @@ namespace WiFitool
                     delete.ToolTip = null;
                 }
             };
-            menu.Items.Add(refresh); menu.Items.Add(edit); menu.Items.Add(permissions); menu.Items.Add(rename); menu.Items.Add(copyName); menu.Items.Add(uploadNew); menu.Items.Add(uploadFolder); menu.Items.Add(newDirectory); menu.Items.Add(download); menu.Items.Add(delete); return menu;
+            menu.Items.Add(refresh); menu.Items.Add(edit); menu.Items.Add(permissions); menu.Items.Add(rename); menu.Items.Add(copyName); menu.Items.Add(copyPath); menu.Items.Add(uploadNew); menu.Items.Add(uploadFolder); menu.Items.Add(newDirectory); menu.Items.Add(download); menu.Items.Add(delete); return menu;
         }
 
         private void FileGrid_PreviewDragOver(object sender, DragEventArgs e)
