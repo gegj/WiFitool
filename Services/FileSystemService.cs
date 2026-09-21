@@ -36,15 +36,15 @@ namespace WiFitool.Services
                 {
                     var unsquashfs = Path.Combine(toolsRoot, "squashfs", "unsquashfs.exe");
                     var pseudo = Path.Combine(session.RootPath, "metadata", SafeName(partition.Name) + ".pseudo");
-                    var pseudoResult = await runner.RunAsync(unsquashfs, new[] { "-pf", pseudo, imagePath }, Path.GetDirectoryName(unsquashfs), token, output);
-                    if ((pseudoResult.ExitCode != 0 && pseudoResult.ExitCode != 2) || !File.Exists(pseudo)) throw new InvalidDataException("SquashFS 元数据导出失败：" + pseudoResult.StandardError);
+                    var pseudoResult = await runner.RunAsync(unsquashfs, new[] { "-pf", pseudo, imagePath }, Path.GetDirectoryName(unsquashfs), token, output, null, IsExpectedSquashFsSymlinkWarning, IsExpectedSquashFsFailure);
+                    if (!IsAllowedSquashFsResult(pseudoResult) || !File.Exists(pseudo)) throw new InvalidDataException("SquashFS 元数据导出失败：" + pseudoResult.StandardError);
                     session.MetadataFiles[partition.Name] = pseudo;
-                    result = await runner.RunAsync(unsquashfs, new[] { "-d", destination, "-ignore-errors", imagePath }, Path.GetDirectoryName(unsquashfs), token, output);
+                    result = await runner.RunAsync(unsquashfs, new[] { "-d", destination, "-ignore-errors", imagePath }, Path.GetDirectoryName(unsquashfs), token, output, null, IsExpectedSquashFsSymlinkWarning, IsExpectedSquashFsFailure);
                 }
                 else if (partition.FileSystem == "JFFS2")
                 {
                     var jefferson = Path.Combine(toolsRoot, "jefferson", "jefferson.exe");
-                    result = await runner.RunAsync(jefferson, new[] { "-d", destination, imagePath }, Path.GetDirectoryName(jefferson), token, output, Encoding.Default);
+                    result = await runner.RunAsync(jefferson, new[] { "-d", destination, imagePath }, Path.GetDirectoryName(jefferson), token, output, Encoding.Default, IsExpectedJffs2SymlinkPrivilegeWarning);
                     var jffsOutput = (result.StandardOutput ?? "") + "\n" + (result.StandardError ?? "");
                     if (result.ExitCode != 0 || !Directory.Exists(destination) || jffsOutput.IndexOf("Decompression error", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
@@ -56,7 +56,7 @@ namespace WiFitool.Services
                     if (File.Exists(devtable)) { session.MetadataFiles[partition.Name] = devtable; CreateDevMetadata(destination, devtable, symlinkTargets); }
                 }
                 else throw new InvalidOperationException("分区文件系统不支持解包：" + partition.FileSystem);
-                if ((result.ExitCode != 0 && result.ExitCode != 2) || !Directory.Exists(destination)) throw new InvalidDataException("分区解包失败：" + result.StandardError);
+                if ((partition.FileSystem == "SquashFS" ? !IsAllowedSquashFsResult(result) : result.ExitCode != 0) || !Directory.Exists(destination)) throw new InvalidDataException("分区解包失败：" + result.StandardError);
                 if (partition.FileSystem == "SquashFS") CreateSquashMetadata(destination, session.MetadataFiles[partition.Name]);
                 NormalizeExtractedSymlinks(destination);
                 session.ExtractedDirectories[partition.Name] = destination;
@@ -382,8 +382,7 @@ namespace WiFitool.Services
                 if (item.Value == null || item.Value.Kind != "symlink") continue;
                 string path;
                 if (!TryGetStagingPath(root, item.Key, out path)) continue;
-                if (File.Exists(path)) TryDeleteFile(path);
-                else if (Directory.Exists(path)) TryDeleteDirectory(path);
+                TryDeletePath(path);
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 var cookie = Encoding.UTF8.GetBytes("WIFITOOL_SYMLINK\n" + (item.Value.Target ?? ""));
                 File.WriteAllBytes(path, cookie);
@@ -412,6 +411,25 @@ namespace WiFitool.Services
         private static void TryDeleteFile(string path)
         {
             try { if (!string.IsNullOrEmpty(path) && File.Exists(path)) { File.SetAttributes(path, FileAttributes.Normal); File.Delete(path); } } catch { }
+        }
+
+        private static void TryDeletePath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    try { File.SetAttributes(path, FileAttributes.Normal); } catch { }
+                    if ((attributes & FileAttributes.Directory) != 0) Directory.Delete(path);
+                    else File.Delete(path);
+                    return;
+                }
+            }
+            catch { }
+            TryDeleteFile(path);
+            TryDeleteDirectory(path);
         }
 
         private static void TryDeleteDirectory(string path)
@@ -482,6 +500,34 @@ namespace WiFitool.Services
             return fields[1] != "S" || fields.Length >= 7;
         }
 
+        private static bool IsExpectedJffs2SymlinkPrivilegeWarning(string line)
+        {
+            return !string.IsNullOrEmpty(line)
+                && line.IndexOf("OS error(22)", StringComparison.OrdinalIgnoreCase) >= 0
+                && line.IndexOf("客户端没有所需的特权", StringComparison.OrdinalIgnoreCase) >= 0
+                && line.IndexOf("Jffs2_raw_inode", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsExpectedSquashFsSymlinkWarning(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return false;
+            var text = line.Trim();
+            return text.StartsWith("create_inode: failed to create symlink ", StringComparison.OrdinalIgnoreCase)
+                && text.EndsWith(", because No such file or directory", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsExpectedSquashFsFailure(ToolResult result)
+        {
+            if (result == null || result.ExitCode != 2 || string.IsNullOrWhiteSpace(result.StandardError)) return false;
+            var lines = result.StandardError.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            return lines.Length > 0 && lines.All(IsExpectedSquashFsSymlinkWarning);
+        }
+
+        private static bool IsAllowedSquashFsResult(ToolResult result)
+        {
+            return result != null && (result.ExitCode == 0 || IsExpectedSquashFsFailure(result));
+        }
+
         private static Dictionary<string, string> CreateJffs2DevTable(string imagePath, string outputPath, string root, bool littleEndian)
         {
             var bytes = File.ReadAllBytes(imagePath);
@@ -490,9 +536,10 @@ namespace WiFitool.Services
             for (var offset = 0; offset + 40 <= bytes.Length; offset += 4)
             {
                 if (Read16(bytes, offset, littleEndian) != 0x1985) continue;
-                var type = Read16(bytes, offset + 2, littleEndian); var total = Read32(bytes, offset + 4, littleEndian);
+                var type = Read16(bytes, offset + 2, littleEndian); var nodeType = type & 0x3FFF; var total = Read32(bytes, offset + 4, littleEndian);
                 if (total < 40 || offset + total > bytes.Length) continue;
-                if ((type & 0x3FFF) == 0x0001)
+                // JFFS2 的 E001/E002 去掉高位标志后分别为 0x2001/0x2002。
+                if (nodeType == 0x2001)
                 {
                     var parent = Read32(bytes, offset + 12, littleEndian); var version = Read32(bytes, offset + 16, littleEndian); var inode = Read32(bytes, offset + 20, littleEndian); var nameSize = bytes[offset + 28];
                     if (offset + 40 + nameSize <= bytes.Length)
@@ -501,7 +548,7 @@ namespace WiFitool.Services
                         JffsDirent previous; if (!dirents.TryGetValue(key, out previous) || previous.Version < version) dirents[key] = new JffsDirent(parent, inode, name, version);
                     }
                 }
-                else if ((type & 0x3FFF) == 0x0002 && total >= 68)
+                else if (nodeType == 0x2002 && total >= 68)
                 {
                     var inode = Read32(bytes, offset + 12, littleEndian); var version = Read32(bytes, offset + 16, littleEndian); var mode = Read32(bytes, offset + 20, littleEndian); var uid = Read16(bytes, offset + 24, littleEndian); var gid = Read16(bytes, offset + 26, littleEndian);
                     var dataSize = Read32(bytes, offset + 52, littleEndian); var target = "";

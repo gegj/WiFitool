@@ -257,22 +257,34 @@ namespace WiFitool.Services
         private static string NormalizeLineEndings(string text, string lineEnding) { var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n'); if (lineEnding == "CRLF") return normalized.Replace("\n", "\r\n"); if (lineEnding == "CR") return normalized.Replace('\n', '\r'); if (lineEnding == "无换行") return normalized.Replace("\n", ""); return normalized; }
         private static void CopyDirectory(string source, string destination, HashSet<string> excludePaths = null)
         {
+            CopyDirectoryContents(source, destination, excludePaths);
+        }
+
+        private static void CopyDirectoryContents(string source, string destination, HashSet<string> excludePaths)
+        {
             Directory.CreateDirectory(destination);
-            foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+            foreach (var entry in Directory.GetFileSystemEntries(source, "*", SearchOption.TopDirectoryOnly))
             {
-                if (Path.GetFileName(file) == ".wifitool.metadata") continue;
-                if (excludePaths != null && excludePaths.Contains(file)) continue;
-                var relative = file.Substring(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); var target = Path.Combine(destination, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(target));
-                File.Copy(file, target, true);
+                if (Path.GetFileName(entry).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsReparsePoint(entry)) continue;
+                var target = Path.Combine(destination, Path.GetFileName(entry));
+                if (Directory.Exists(entry))
+                {
+                    CopyDirectoryContents(entry, target, excludePaths);
+                    continue;
+                }
+                if (excludePaths != null && excludePaths.Contains(entry)) continue;
+                File.Copy(entry, target, true);
             }
+        }
+
+        private static bool IsReparsePoint(string path)
+        {
+            try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; } catch { return false; }
         }
 
         private static void CopyDirectoryForDownload(string source, string destination)
         {
-            Directory.CreateDirectory(destination);
-            foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
-                if (!Path.GetFileName(directory).Equals(".wifitool.metadata", StringComparison.OrdinalIgnoreCase)) Directory.CreateDirectory(Path.Combine(destination, directory.Substring(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
             CopyDirectory(source, destination);
         }
 

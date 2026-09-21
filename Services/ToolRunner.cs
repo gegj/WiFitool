@@ -66,14 +66,14 @@ namespace WiFitool.Services
                 }
             }, token);
         }
-        public Task<ToolResult> RunAsync(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output = null, Encoding textEncoding = null)
+        public Task<ToolResult> RunAsync(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output = null, Encoding textEncoding = null, Func<string, bool> suppressOutputLine = null, Func<ToolResult, bool> isExpectedFailure = null)
         {
             var normalizedArguments = arguments == null ? new List<string>() : new List<string>(arguments);
             LogService.Instance.Debug("ToolRunner", "执行外部工具：" + Path.GetFileName(executable) + " " + BuildArguments(normalizedArguments));
-            return Task.Run(() => Run(executable, normalizedArguments, workingDirectory, token, output, textEncoding), token);
+            return Task.Run(() => Run(executable, normalizedArguments, workingDirectory, token, output, textEncoding, suppressOutputLine, isExpectedFailure), token);
         }
 
-        private static ToolResult Run(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output, Encoding textEncoding)
+        private static ToolResult Run(string executable, IEnumerable<string> arguments, string workingDirectory, CancellationToken token, Action<string, bool> output, Encoding textEncoding, Func<string, bool> suppressOutputLine, Func<ToolResult, bool> isExpectedFailure)
         {
             if (!File.Exists(executable))
             {
@@ -99,11 +99,11 @@ namespace WiFitool.Services
                 var stderr = new StringBuilder();
                 process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs args)
                 {
-                    if (args.Data != null) { stdout.AppendLine(args.Data); LogService.Instance.Debug("ToolRunner", Path.GetFileName(executable) + " stdout: " + args.Data); if (output != null) output(args.Data, false); }
+                    if (args.Data != null) { stdout.AppendLine(args.Data); if (suppressOutputLine != null && suppressOutputLine(args.Data)) return; LogService.Instance.Debug("ToolRunner", Path.GetFileName(executable) + " stdout: " + args.Data); if (output != null) output(args.Data, false); }
                 };
                 process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs args)
                 {
-                    if (args.Data != null) { stderr.AppendLine(args.Data); LogService.Instance.Debug("ToolRunner", Path.GetFileName(executable) + " stderr: " + args.Data); if (output != null) output(args.Data, true); }
+                    if (args.Data != null) { stderr.AppendLine(args.Data); if (suppressOutputLine != null && suppressOutputLine(args.Data)) return; LogService.Instance.Debug("ToolRunner", Path.GetFileName(executable) + " stderr: " + args.Data); if (output != null) output(args.Data, true); }
                 };
                 if (!process.Start()) throw new InvalidOperationException("无法启动工具：" + executable);
                 process.BeginOutputReadLine();
@@ -118,15 +118,16 @@ namespace WiFitool.Services
                 }
                 process.WaitForExit();
                 var result = new ToolResult { ExitCode = process.ExitCode, StandardOutput = stdout.ToString(), StandardError = stderr.ToString() };
-                LogToolResult(executable, arguments, result);
+                LogToolResult(executable, arguments, result, isExpectedFailure);
                 return result;
             }
         }
 
-        private static void LogToolResult(string executable, IEnumerable<string> arguments, ToolResult result)
+        private static void LogToolResult(string executable, IEnumerable<string> arguments, ToolResult result, Func<ToolResult, bool> isExpectedFailure = null)
         {
             var command = Path.GetFileName(executable) + " " + BuildArguments(arguments) + "，退出码 " + result.ExitCode;
-            if (result.ExitCode == 0) LogService.Instance.Debug("ToolRunner", "完成外部工具：" + command);
+            var expectedFailure = result.ExitCode != 0 && isExpectedFailure != null && isExpectedFailure(result);
+            if (result.ExitCode == 0 || expectedFailure) LogService.Instance.Debug("ToolRunner", "完成外部工具：" + command);
             else LogService.Instance.Warn("ToolRunner", "外部工具失败：" + command + "，错误：" + (result.StandardError ?? "").Trim());
         }
 
