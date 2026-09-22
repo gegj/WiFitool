@@ -43,7 +43,7 @@ namespace WiFitool.Services
             new DriverInstallPackage(
                 "中某微驱动",
                 "安装中某微开发驱动，并自动运行无界面的串口驱动程序。",
-                "https://github.com/gegj/WiFitool/raw/refs/heads/main/tools/drive/%E4%B8%AD%E6%9F%90%E5%BE%AE%E9%A9%B1%E5%8A%A8.zip",
+                "https://pub-54b5d903df554e089632d2d9772fa35d.r2.dev/WiFitool/%E4%B8%AD%E6%9F%90%E5%BE%AE%E9%A9%B1%E5%8A%A8.zip",
                 "ZXIC_Develop_Driver.exe 完成后，再运行 zxicser.exe。",
                 new[] { "ZXIC_Develop_Driver.exe", "zxicser.exe" },
                 false,
@@ -51,19 +51,19 @@ namespace WiFitool.Services
             new DriverInstallPackage(
                 "移远ASR专用驱动",
                 "安装移远 ASR 设备使用的 Windows USB 驱动。",
-                "https://github.com/gegj/WiFitool/raw/refs/heads/main/tools/drive/%E7%A7%BB%E8%BF%9CASR%E4%B8%93%E7%94%A8%E9%A9%B1%E5%8A%A8.zip",
+                "https://pub-54b5d903df554e089632d2d9772fa35d.r2.dev/WiFitool/%E7%A7%BB%E8%BF%9CASR%E4%B8%93%E7%94%A8%E9%A9%B1%E5%8A%A8.zip",
                 "按压缩包中的安装程序顺序执行。"),
             new DriverInstallPackage(
                 "紫光驱动",
                 "安装紫光设备的完整驱动包。",
-                "https://github.com/gegj/WiFitool/raw/refs/heads/main/tools/drive/%E7%B4%AB%E5%85%89%E9%A9%B1%E5%8A%A8.zip",
+                "https://pub-54b5d903df554e089632d2d9772fa35d.r2.dev/WiFitool/%E7%B4%AB%E5%85%89%E9%A9%B1%E5%8A%A8.zip",
                 "按文件名中的数字编号顺序安装，每个程序完成后再继续。",
                 null,
                 true),
             new DriverInstallPackage(
                 "通用安卓ADB驱动",
                 "安装通用 Android ADB 驱动。",
-                "https://github.com/gegj/WiFitool/raw/refs/heads/main/tools/drive/%E9%80%9A%E7%94%A8%E5%AE%89%E5%8D%93ADB%E9%A9%B1%E5%8A%A8.zip",
+                "https://pub-54b5d903df554e089632d2d9772fa35d.r2.dev/WiFitool/%E9%80%9A%E7%94%A8%E5%AE%89%E5%8D%93ADB%E9%A9%B1%E5%8A%A8.zip",
                 "按压缩包中的安装程序执行。")
         };
 
