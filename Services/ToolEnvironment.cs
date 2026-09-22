@@ -10,16 +10,17 @@ namespace WiFitool.Services
 {
     internal static class ToolEnvironment
     {
-        // 工具包下载地址；主地址失败时使用兜底地址。
-        private const string PrimaryDownloadUrl = "https://ilz.ly93.cc/531/39559978731/tools.zip";
-        private const string FallbackDownloadUrl = "https://github.com/gegj/WiFitool/raw/refs/heads/main/tools.zip";
-        private const string ToolsPackageSha256 = "C88259495BAD8FEFB3BE9A0011198336148756809AAC5EA4C37D6D5666B2A6C7";
+        // 工具包下载地址。
+        private const string PrimaryDownloadUrl = "https://pub-54b5d903df554e089632d2d9772fa35d.r2.dev/WiFitool/tools.zip";
+        private const string ToolsPackageSha256 = "EF88655FF85A063AE7B6939803D801034287DA66E3D052AF0EE9B4BC4EAE9038";
 
         private static readonly string[] requiredFiles =
         {
             @"adb\adb.exe",
             @"adb\AdbWinApi.dll",
             @"adb\AdbWinUsbApi.dll",
+            @"mtd\MTDWriter",
+            @"mtd\MTDChecker",
             @"adbd\adbd",
             @"atweb\atweb",
             @"atweb\at.html",
@@ -63,27 +64,23 @@ namespace WiFitool.Services
         public static async Task EnsureReadyAsync(IProgress<int> progress = null)
         {
             if (IsReady()) { LogService.Instance.Debug("ToolEnvironment", "工具环境检查通过"); return; }
-            var lastError = "";
-            foreach (var url in new[] { PrimaryDownloadUrl, FallbackDownloadUrl })
+            try
             {
-                try
+                LogService.Instance.Info("ToolEnvironment", "下载工具包：" + PrimaryDownloadUrl);
+                await DownloadAndExtractAsync(PrimaryDownloadUrl, progress);
+                if (IsReady())
                 {
-                    LogService.Instance.Info("ToolEnvironment", "尝试下载工具包：" + url);
-                    await DownloadAndExtractAsync(url, progress);
-                    if (IsReady())
-                    {
-                        LogService.Instance.Info("ToolEnvironment", "工具包下载并校验完成：" + url);
-                        return;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    lastError = ex.Message;
-                    LogService.Instance.Warn("ToolEnvironment", "工具包地址失败：" + url, ex);
+                    LogService.Instance.Info("ToolEnvironment", "工具包下载并校验完成：" + PrimaryDownloadUrl);
+                    return;
                 }
             }
-            LogService.Instance.Error("ToolEnvironment", "所有工具包下载地址均失败");
-            throw new InvalidOperationException("工具下载失败：" + (string.IsNullOrEmpty(lastError) ? "无法连接下载地址" : lastError));
+            catch (Exception ex)
+            {
+                LogService.Instance.Error("ToolEnvironment", "工具包下载失败：" + PrimaryDownloadUrl, ex);
+                throw new InvalidOperationException("工具下载失败：" + ex.Message, ex);
+            }
+            LogService.Instance.Error("ToolEnvironment", "工具包内容不完整：" + PrimaryDownloadUrl);
+            throw new InvalidOperationException("工具包内容不完整。");
         }
 
         private static async Task DownloadAndExtractAsync(string url, IProgress<int> progress)

@@ -28,6 +28,7 @@ namespace WiFitool
         private readonly ToolRunner toolRunner = new ToolRunner();
         private readonly FileSystemService fileSystemService;
         private readonly AdbService adbService;
+        private readonly MtdFlashService mtdFlashService;
         private readonly DriverInstallService driverInstallService = new DriverInstallService();
         private readonly LogService logService = LogService.Instance;
         private readonly RootfsFeatureService rootfsFeatureService = new RootfsFeatureService();
@@ -85,6 +86,7 @@ namespace WiFitool
             Title = "WiFitool v" + typeof(MainWindow).Assembly.GetName().Version.ToString(3);
             fileSystemService = new FileSystemService(toolRunner);
             adbService = new AdbService(toolRunner);
+            mtdFlashService = new MtdFlashService(adbService);
             workspaceService.CleanupStaleWorkspaces();
             adbTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             adbTimer.Tick += async delegate { await CheckAdbStatusAsync(); };
