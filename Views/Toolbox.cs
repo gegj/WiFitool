@@ -330,7 +330,7 @@ namespace WiFitool
             var border = new Border { Background = (Brush)FindResource("PanelBrush"), BorderBrush = (Brush)FindResource("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(20) };
             border.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 22, ShadowDepth = 5, Opacity = 0.42, Color = Colors.Black };
             var root = new Grid();
-            for (var index = 0; index < 5; index++) root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var index = 0; index < 6; index++) root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var header = new Grid { Margin = new Thickness(0, 0, 0, 14) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -343,6 +343,14 @@ namespace WiFitool
             var note = new TextBlock { Text = "选择 mtd4 固件后将备份并覆盖设备 /dev/mtd4，校验成功后自动重启。刷写过程中请勿断开设备。", TextWrapping = TextWrapping.Wrap, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, Margin = new Thickness(0, 0, 0, 14) };
             Grid.SetRow(note, 1); root.Children.Add(note);
 
+            var ipRow = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+            ipRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+            ipRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ipRow.Children.Add(new TextBlock { Text = "设备 IP", VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)FindResource("MutedBrush") });
+            var ipBox = new TextBox { Text = "正在获取…", IsReadOnly = true, Height = 36, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "自动识别的 RNDIS 设备 IP" };
+            Grid.SetColumn(ipBox, 1); ipRow.Children.Add(ipBox);
+            Grid.SetRow(ipRow, 2); root.Children.Add(ipRow);
+
             var fileRow = new Grid { Margin = new Thickness(0, 0, 0, 12) };
             fileRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             fileRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -350,25 +358,41 @@ namespace WiFitool
             fileRow.Children.Add(fileBox);
             var select = new Button { Content = "选择固件", Style = (Style)FindResource("CompactButton"), Height = 36, Margin = new Thickness(8, 0, 0, 0) };
             Grid.SetColumn(select, 1); fileRow.Children.Add(select);
-            Grid.SetRow(fileRow, 2); root.Children.Add(fileRow);
+            Grid.SetRow(fileRow, 3); root.Children.Add(fileRow);
 
             var state = new TextBlock { Text = "请选择固件。", TextWrapping = TextWrapping.Wrap, Foreground = (Brush)FindResource("MutedBrush"), FontSize = 12, Margin = new Thickness(0, 0, 0, 14) };
-            Grid.SetRow(state, 3); root.Children.Add(state);
+            Grid.SetRow(state, 4); root.Children.Add(state);
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             var close = new Button { Content = "关闭", IsCancel = true };
             close.Click += delegate { window.Close(); };
             buttons.Children.Add(close);
-            Grid.SetRow(buttons, 4); root.Children.Add(buttons);
+            Grid.SetRow(buttons, 5); root.Children.Add(buttons);
             border.Child = root;
             window.Content = border;
+            Func<string> resolveDeviceIp = delegate
+            {
+                Func<string> resolve = delegate
+                {
+                    var candidates = GetRndisDeviceIps();
+                    var selected = candidates.Count == 1 ? candidates[0] : candidates.Count > 1 ? SelectRndisIp(window, candidates) : "";
+                    ipBox.Text = string.IsNullOrWhiteSpace(selected) ? "未获取到" : selected;
+                    return selected ?? "";
+                };
+                return Dispatcher.CheckAccess() ? resolve() : Dispatcher.Invoke(resolve);
+            };
+            window.ContentRendered += delegate
+            {
+                try { resolveDeviceIp(); }
+                catch { ipBox.Text = "未获取到"; }
+            };
 
             select.Click += async delegate
             {
                 var picker = new OpenFileDialog { Title = "选择 mtd4 固件", Filter = "mtd4 固件|*.bin;*.mtd;*.mtd4|所有文件|*.*", CheckFileExists = true };
                 if (picker.ShowDialog(window) != true) return;
                 var firmwarePath = Path.GetFullPath(picker.FileName);
-                var backupPath = Path.Combine(Path.GetDirectoryName(firmwarePath), "mtd4_bak.bin");
+                var backupPath = MtdFlashService.GetBackupPath(firmwarePath);
                 try
                 {
                     MtdFlashService.ValidateFirmware(firmwarePath);
@@ -388,19 +412,15 @@ namespace WiFitool
                 close.IsEnabled = false;
                 headerClose.IsEnabled = false;
                 var failed = false;
+                ipBox.Text = "等待重启后重新获取…";
                 Action<string> report = message => Dispatcher.Invoke(delegate { state.Text = message; StatusText.Text = message; });
                 try
                 {
-                    await RunBusyAsync("正在执行 MTD 刷写…", token => mtdFlashService.RunAsync(adbSerial, firmwarePath, backupPath, token, report), null, delegate(Exception ex)
+                    await RunBusyAsync("正在执行 MTD 刷写…", token => mtdFlashService.RunAsync(adbSerial, firmwarePath, backupPath, resolveDeviceIp, token, report), null, delegate(Exception ex)
                     {
                         failed = true;
                         state.Text = "刷写失败：" + ex.Message;
                     });
-                    if (!failed)
-                    {
-                        state.Text = "刷写完成，设备正在重启。";
-                        StatusText.Text = state.Text;
-                    }
                 }
                 finally
                 {

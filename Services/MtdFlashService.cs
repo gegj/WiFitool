@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -9,6 +10,8 @@ namespace WiFitool.Services
 {
     internal sealed class MtdFlashService
     {
+        private const string LoginPath = "/reqproc/proc_post?goformId=LOGIN&password=YWRtaW4%3D";
+        private const string RestoreFactoryPath = "/reqproc/proc_post?goformId=RESTORE_FACTORY_SETTINGS";
         private readonly AdbService adbService;
 
         public MtdFlashService(AdbService adbService)
@@ -47,7 +50,15 @@ namespace WiFitool.Services
                 throw new InvalidDataException("SquashFS 镜像大小信息无效。");
         }
 
-        public async Task RunAsync(string serial, string firmwarePath, string backupPath, CancellationToken token, Action<string> reportStatus)
+        public static string GetBackupPath(string firmwarePath)
+        {
+            var directory = Path.GetDirectoryName(firmwarePath);
+            var name = Path.GetFileNameWithoutExtension(firmwarePath);
+            var extension = Path.GetExtension(firmwarePath);
+            return Path.Combine(directory, name + "_bak" + extension);
+        }
+
+        public async Task RunAsync(string serial, string firmwarePath, string backupPath, Func<string> resolveDeviceIp, CancellationToken token, Action<string> reportStatus)
         {
             ValidateFirmware(firmwarePath);
             if (string.Equals(Path.GetFullPath(firmwarePath), Path.GetFullPath(backupPath), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("备份文件不能与所选固件相同。");
@@ -93,6 +104,117 @@ namespace WiFitool.Services
             Step(reportStatus, "刷写完成，正在重启设备…");
             await adbService.RebootAsync(serial, token);
             LogService.Instance.Info("MTD", "MTD 刷写完成并已发送重启命令");
+            await RequestFactoryResetAsync(resolveDeviceIp, token, reportStatus);
+        }
+
+        private async Task RequestFactoryResetAsync(Func<string> resolveDeviceIp, CancellationToken token, Action<string> reportStatus)
+        {
+            Step(reportStatus, "设备正在重启，等待 Web 服务恢复…");
+            await Task.Delay(5000, token);
+
+            Step(reportStatus, "正在重新获取设备 IP…");
+            var deviceIp = "";
+            for (var attempt = 0; attempt < 30; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                deviceIp = resolveDeviceIp();
+                if (!string.IsNullOrWhiteSpace(deviceIp)) break;
+                await Task.Delay(1000, token);
+            }
+            if (string.IsNullOrWhiteSpace(deviceIp)) throw new InvalidOperationException("设备重启后未获取到 IP，无法请求恢复出厂设置。");
+
+            var cookies = new CookieContainer();
+            Step(reportStatus, "正在登录设备 Web 接口…");
+            var loginDeadline = DateTime.UtcNow.AddSeconds(5);
+            var loginSuccess = false;
+            while (!loginSuccess && DateTime.UtcNow < loginDeadline)
+            {
+                token.ThrowIfCancellationRequested();
+                var remaining = (int)Math.Max(1, Math.Min(3000, (loginDeadline - DateTime.UtcNow).TotalMilliseconds));
+                loginSuccess = await TrySendHttpGetAsync(deviceIp, LoginPath, cookies, token, "登录接口", true, remaining);
+                if (!loginSuccess)
+                {
+                    var delay = (int)Math.Max(1, Math.Min(500, (loginDeadline - DateTime.UtcNow).TotalMilliseconds));
+                    if (DateTime.UtcNow < loginDeadline) await Task.Delay(delay, token);
+                }
+            }
+            if (!loginSuccess) Step(reportStatus, "登录接口等待 5 秒未确认成功，继续请求恢复出厂设置…");
+
+            Step(reportStatus, "正在请求恢复出厂设置…");
+            await TrySendHttpGetAsync(deviceIp, RestoreFactoryPath, cookies, token, "恢复出厂接口");
+            Step(reportStatus, "恢复出厂设置请求已发起，已恢复出厂设置。");
+        }
+
+        private static async Task<bool> TrySendHttpGetAsync(string host, string path, CookieContainer cookies, CancellationToken token, string name, bool requireLoginSuccess = false, int timeoutMilliseconds = 3000)
+        {
+            try
+            {
+                var request = (HttpWebRequest)WebRequest.Create("http://" + host + path);
+                request.Method = "GET";
+                request.Proxy = null;
+                request.KeepAlive = false;
+                request.Timeout = timeoutMilliseconds;
+                request.ReadWriteTimeout = timeoutMilliseconds;
+                request.CookieContainer = cookies;
+                var responseTask = request.GetResponseAsync();
+                var completed = await Task.WhenAny(responseTask, Task.Delay(timeoutMilliseconds, token));
+                if (completed != responseTask)
+                {
+                    token.ThrowIfCancellationRequested();
+                    throw new TimeoutException(name + "请求超时。");
+                }
+
+                using (var response = (HttpWebResponse)await responseTask)
+                using (var stream = response.GetResponseStream())
+                {
+                    if (!requireLoginSuccess)
+                    {
+                        LogService.Instance.Info("MTD", name + "已发起：" + host + path);
+                        return true;
+                    }
+
+                    var body = "";
+                    if (stream != null)
+                    {
+                        using (var reader = new StreamReader(stream))
+                        {
+                            var bodyTask = reader.ReadToEndAsync();
+                            var bodyCompleted = await Task.WhenAny(bodyTask, Task.Delay(timeoutMilliseconds, token));
+                            if (bodyCompleted != bodyTask)
+                            {
+                                token.ThrowIfCancellationRequested();
+                                throw new TimeoutException(name + "响应读取超时。");
+                            }
+                            body = await bodyTask;
+                        }
+                    }
+                    if (requireLoginSuccess && !IsLoginSuccess(body))
+                    {
+                        LogService.Instance.Warn("MTD", name + "返回结果未确认成功：" + host + path);
+                        return false;
+                    }
+                    LogService.Instance.Info("MTD", name + "已发送：" + host + path);
+                    return true;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                LogService.Instance.Warn("MTD", name + "请求失败：" + host + path, ex);
+                return false;
+            }
+        }
+
+        private static bool IsLoginSuccess(string body)
+        {
+            var compact = Regex.Replace(body ?? "", "\\s+", "");
+            return compact.IndexOf("\"result\":\"0\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   compact.IndexOf("\"result\":0", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   compact.IndexOf("\"result\":\"4\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   compact.IndexOf("\"result\":4", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private async Task RunRequiredShellAsync(string serial, string command, string errorMessage, CancellationToken token)
