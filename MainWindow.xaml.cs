@@ -1028,8 +1028,8 @@ namespace WiFitool
             var atwebRoot = Path.Combine(ToolEnvironment.Root, "atweb");
             await EnsureAdbLibraryAsync("/lib/libamt.so", Path.Combine(atwebRoot, "libamt.so"), token);
             await EnsureAdbLibraryAsync("/lib/libcpnv.so", Path.Combine(atwebRoot, "libcpnv.so"), token);
-            await adbService.UploadFileAsync(adbSerial, "/sbin/atweb", Path.Combine(atwebRoot, "atweb"), false, token);
-            await adbService.UploadFileAsync(adbSerial, "/etc_ro/web/at.html", Path.Combine(atwebRoot, "at.html"), false, token);
+            await adbService.UploadFileAsync(adbSerial, "/sbin/atweb", Path.Combine(atwebRoot, "atweb"), token);
+            await adbService.UploadFileAsync(adbSerial, "/etc_ro/web/at.html", Path.Combine(atwebRoot, "at.html"), token);
             await adbService.SetModeAsync(adbSerial, "/sbin/atweb", Convert.ToInt32("775", 8), false, token);
             foreach (var item in new[] { new[] { "/etc_ro/web/subpg/main.html", "data-trans=\"quick_setting\" class=\"cFFCE2B\"></a></li>" }, new[] { "/etc_ro/web/subpg/sim_abnormal.html", "href=\"#wlan_sleep\"></a></li>" }, new[] { "/etc_ro/web/tmpl/home.html", "data-trans=\"quick_setting\"></a></li>" }, new[] { "/etc_ro/web/tmpl/nosimcard.html", "data-trans=\"advanced_settings\"></a></li>" } }) await InsertAdbMenuAsync(item[0], item[1], token);
             await AppendAdbStartupAsync("/sbin/rm_dev.sh", "(sleep 20; /sbin/atweb >/dev/null 2>&1) &", token);
@@ -1037,7 +1037,7 @@ namespace WiFitool
 
         private async Task EnsureAdbLibraryAsync(string remote, string local, CancellationToken token)
         {
-            if (!await adbService.RemoteFileExistsAsync(adbSerial, remote, token)) await adbService.UploadFileAsync(adbSerial, remote, local, false, token);
+            if (!await adbService.RemoteFileExistsAsync(adbSerial, remote, token)) await adbService.UploadFileAsync(adbSerial, remote, local, token);
         }
 
         private async Task CleanAdbStartupFileAsync(string remote, CancellationToken token)
@@ -1409,7 +1409,7 @@ namespace WiFitool
             if (!CanUploadToCurrentSource()) { MessageBox.Show(this, "请先选择本地固件分区或连接在线 ADB 设备。", "上传", MessageBoxButton.OK, MessageBoxImage.Information); return; }
             var sources = sourcePaths.Where(x => File.Exists(x) || Directory.Exists(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (sources.Count == 0) return;
-            if (MessageBox.Show(this, "将上传文件/文件夹，若目标存在同名文件或文件夹会被覆盖。是否继续？", "确认上传", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            if (MessageBox.Show(this, "将结束本批次对应进程，并删除设备上的同名文件后上传。是否继续？", "确认上传", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             var targetIsAdb = adbMode;
             var targetSerial = adbSerial;
             var targetRoot = currentRoot;
@@ -1480,7 +1480,11 @@ namespace WiFitool
             if (!exists)
             {
                 var fileExists = targetIsAdb ? await adbService.RemoteFileExistsAsync(targetSerial, targetPath, token) : File.Exists(fileService.Resolve(targetRoot, targetPath, false));
-                if (fileExists) throw new InvalidOperationException("目标路径已存在同名文件：" + targetPath);
+                if (fileExists)
+                {
+                    if (targetIsAdb) await adbService.DeleteRemoteAsync(targetSerial, targetPath, false, token);
+                    else throw new InvalidOperationException("目标路径已存在同名文件：" + targetPath);
+                }
                 if (targetIsAdb) await adbService.CreateDirectoryAsync(targetSerial, targetDirectory, source.Name, token); else await fileService.CreateDirectoryAsync(targetRoot, targetDirectory, source.Name);
             }
             var changed = !exists;
@@ -1496,20 +1500,20 @@ namespace WiFitool
         private async Task<bool> UploadSourceFileAsync(string sourcePath, string targetDirectory, string targetName, bool targetIsAdb, string targetSerial, string targetRoot, CancellationToken token)
         {
             var targetPath = CombineVirtualPath(targetDirectory, targetName);
-            var existing = targetIsAdb ? await adbService.RemoteFileExistsAsync(targetSerial, targetPath, token) : File.Exists(fileService.Resolve(targetRoot, targetPath, false));
-            var folderExists = targetIsAdb ? await adbService.RemoteDirectoryExistsAsync(targetSerial, targetPath, token) : Directory.Exists(fileService.Resolve(targetRoot, targetPath, false));
-            if (folderExists) throw new InvalidOperationException("目标路径是文件夹：" + targetPath);
-            StatusText.Text = "正在上传：" + targetName;
             if (targetIsAdb)
             {
-                var length = new FileInfo(sourcePath).Length;
-                var free = await adbService.GetFreeBytesAsync(targetSerial, targetDirectory, token);
-                var direct = free < length;
-                if (direct && MessageBox.Show(this, "设备可用空间为 " + FormatSize(free) + "，不足以安全上传 " + targetName + "。\n直接写入可减少临时空间占用，但中断或失败可能损坏目标文件。是否继续？", "设备空间不足", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
-                await adbService.UploadFileAsync(targetSerial, targetPath, sourcePath, direct, token);
+                await adbService.StopProcessesByNameAsync(targetSerial, new[] { targetPath }, token);
+                StatusText.Text = "正在删除：" + targetName;
+                await adbService.DeleteRemoteAsync(targetSerial, targetPath, false, token);
+                StatusText.Text = "正在上传：" + targetName;
+                await adbService.PushFileAsync(targetSerial, targetPath, sourcePath, token);
             }
             else
             {
+                var existing = File.Exists(fileService.Resolve(targetRoot, targetPath, false));
+                var folderExists = Directory.Exists(fileService.Resolve(targetRoot, targetPath, false));
+                if (folderExists) throw new InvalidOperationException("目标路径是文件夹：" + targetPath);
+                StatusText.Text = "正在上传：" + targetName;
                 await fileService.UploadFileAsync(targetRoot, targetDirectory, sourcePath, existing);
             }
             return true;

@@ -70,7 +70,7 @@ namespace WiFitool.Services
 
             var localMd5 = CalculateMd5(firmwarePath);
             Step(reportStatus, "正在上传固件并校验…");
-            await adbService.UploadFileAsync(serial, "/tmp/mtd4.bin", firmwarePath, false, token);
+            await adbService.UploadFileAsync(serial, "/tmp/mtd4.bin", firmwarePath, token);
             var deviceMd5 = await ReadMd5Async(serial, "/tmp/mtd4.bin", token);
             LogService.Instance.Info("MTD", "固件 MD5：本地 " + localMd5 + "，设备 " + deviceMd5);
             if (!string.Equals(localMd5, deviceMd5, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("固件上传校验失败。");
@@ -83,14 +83,14 @@ namespace WiFitool.Services
             await RunShellAsync(serial, "cat /sbin/fota_release_space.sh|grep -v adbd|sh 2>/dev/null; killall -q goahead udhcpd dnsmasq iccid_check rmc zte_mifi zte_ufi zte_cpe 2>/dev/null", token, false);
 
             Step(reportStatus, "正在上传刷写工具…");
-            await adbService.UploadFileAsync(serial, "/tmp/MTDWriter", writerPath, false, token);
+            await adbService.UploadFileAsync(serial, "/tmp/MTDWriter", writerPath, token);
             await RunRequiredShellAsync(serial, "chmod 777 /tmp/MTDWriter", "设置刷写工具权限失败。", token);
-            await adbService.UploadFileAsync(serial, "/tmp/MTDChecker", checkerPath, false, token);
+            await adbService.UploadFileAsync(serial, "/tmp/MTDChecker", checkerPath, token);
             await RunRequiredShellAsync(serial, "chmod 777 /tmp/MTDChecker", "设置校验工具权限失败。", token);
 
             Step(reportStatus, "正在准备刷写环境…");
             await RunShellAsync(serial, "killall -9 zte_ufi zte_mifi zte_cpe goahead 2>/dev/null", token, false);
-            await adbService.UploadFileAsync(serial, "/tmp/new", firmwarePath, false, token);
+            await adbService.UploadFileAsync(serial, "/tmp/new", firmwarePath, token);
 
             Step(reportStatus, "正在刷写 /dev/mtd4，请勿断开设备…");
             await RunRequiredShellAsync(serial, "/tmp/MTDWriter /dev/mtd4 0 999", "mtd4 刷写失败。", token);

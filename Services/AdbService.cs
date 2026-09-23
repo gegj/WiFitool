@@ -323,7 +323,10 @@ namespace WiFitool.Services
             if (wanted.Count == 0) return;
             foreach (var process in await ListProcessesAsync(serial, token))
             {
-                if (!wanted.Contains(process.Name) && !wanted.Contains(Path.GetFileName(process.ExecutablePath ?? ""))) continue;
+                if (!wanted.Any(x => string.Equals(x, process.Name, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x, Path.GetFileName(process.ExecutablePath ?? ""), StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x, process.ExecutablePath, StringComparison.OrdinalIgnoreCase)
+                    || (process.Arguments ?? "").IndexOf(x, StringComparison.OrdinalIgnoreCase) >= 0)) continue;
                 if (process.Pid > 1) await StopProcessAsync(serial, process.Pid, token);
             }
         }
@@ -547,24 +550,10 @@ namespace WiFitool.Services
             return result.StandardOutput.IndexOf("__WIFITOOL_DIRECTORY__", StringComparison.Ordinal) >= 0;
         }
 
-        public async Task<long> GetFreeBytesAsync(string serial, string virtualPath, CancellationToken token)
-        {
-            ValidateSerial(serial);
-            var path = NormalizeRemotePath(virtualPath);
-            var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "df -k " + QuoteShellArgument(path) }, adbDirectory, token, null);
-            if (result.ExitCode != 0) throw new InvalidOperationException("无法读取设备可用空间：" + result.StandardError);
-            foreach (var line in result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Reverse())
-            {
-                var match = Regex.Match(line.Trim(), @"^\S+\s+\d+\s+\d+\s+(\d+)\s+\d+%\s+.+$");
-                if (match.Success) return long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) * 1024;
-            }
-            throw new InvalidOperationException("无法识别设备可用空间。");
-        }
-
         public async Task WriteFileAsync(string serial, string virtualPath, byte[] bytes, CancellationToken token)
         {
             ValidateSerial(serial); var tempDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Temp"); Directory.CreateDirectory(tempDirectory); var local = Path.Combine(tempDirectory, "adb-write-" + Guid.NewGuid().ToString("N"));
-            try { File.WriteAllBytes(local, bytes); await UploadFileAsync(serial, virtualPath, local, false, token); }
+            try { File.WriteAllBytes(local, bytes); await UploadFileAsync(serial, virtualPath, local, token); }
             finally { try { if (File.Exists(local)) File.Delete(local); } catch { } }
         }
 
@@ -573,7 +562,7 @@ namespace WiFitool.Services
             ValidateSerial(serial); var path = NormalizeRemotePath(virtualPath); var tempDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiFitool", "Temp"); Directory.CreateDirectory(tempDirectory); var local = Path.Combine(tempDirectory, "adb-hosts-" + Guid.NewGuid().ToString("N")); try { await EnsureDevicePathWritableAsync(serial, path, token); File.WriteAllBytes(local, bytes); var result = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", local, path }, adbDirectory, token, null); if (result.ExitCode != 0) throw new InvalidOperationException("创建设备文件失败：" + result.StandardError); var chmod = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chmod", "0775", path }, adbDirectory, token, null); if (chmod.ExitCode != 0) throw new InvalidOperationException("设置 hosts 权限失败：" + chmod.StandardError); } finally { try { if (File.Exists(local)) File.Delete(local); } catch { } }
         }
 
-        public async Task UploadFileAsync(string serial, string virtualPath, string localPath, bool direct, CancellationToken token)
+        public async Task UploadFileAsync(string serial, string virtualPath, string localPath, CancellationToken token)
         {
             ValidateSerial(serial);
             if (!File.Exists(localPath)) throw new FileNotFoundException("找不到要上传的本地文件。", localPath);
@@ -591,23 +580,10 @@ namespace WiFitool.Services
             var tempRemote = CombineRemotePath(ParentRemotePath(target), ".wifitool-upload-" + Guid.NewGuid().ToString("N"));
             try
             {
-                var useStream = direct;
-                if (!useStream)
-                {
-                    var push = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", localPath, tempRemote }, adbDirectory, token, null);
-                    if (push.ExitCode != 0)
-                    {
-                        var error = (push.StandardError + push.StandardOutput).ToLowerInvariant();
-                        if (error.Contains("no space left") || error.Contains("not enough space")) useStream = true;
-                        else throw new InvalidOperationException("上传设备文件失败：" + push.StandardError);
-                    }
-                    if (!useStream)
-                    {
-                        var move = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mv " + QuoteShellArgument(tempRemote) + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
-                        if (move.ExitCode != 0) throw new InvalidOperationException("替换设备文件失败：" + move.StandardError);
-                    }
-                }
-                if (useStream) await StreamWriteAsync(serial, target, File.ReadAllBytes(localPath), token);
+                var push = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", localPath, tempRemote }, adbDirectory, token, null);
+                if (push.ExitCode != 0) throw new InvalidOperationException("上传设备文件失败：" + push.StandardError);
+                var move = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "mv " + QuoteShellArgument(tempRemote) + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
+                if (move.ExitCode != 0) throw new InvalidOperationException("替换设备文件失败：" + move.StandardError);
                 if (attributes.Type == '-' && attributes.Uid >= 0 && attributes.Gid >= 0)
                 {
                     var chown = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "chown " + attributes.Uid + ":" + attributes.Gid + " " + QuoteShellArgument(target) }, adbDirectory, token, null);
@@ -623,12 +599,14 @@ namespace WiFitool.Services
             }
         }
 
-        private async Task StreamWriteAsync(string serial, string target, byte[] bytes, CancellationToken token)
+        public async Task PushFileAsync(string serial, string virtualPath, string localPath, CancellationToken token)
         {
-            var result = await runner.RunWithInputAsync(adbPath, new[] { "-s", serial, "shell", "-T", "cat > " + QuoteShellArgument(target) }, adbDirectory, bytes, token);
-            if (result.ExitCode != 0) throw new InvalidOperationException("流式写入失败，目标文件可能不完整：" + result.StandardError);
-            var size = await runner.RunAsync(adbPath, new[] { "-s", serial, "shell", "wc -c < " + QuoteShellArgument(target) }, adbDirectory, token, null);
-            long actual; if (size.ExitCode != 0 || !long.TryParse(size.StandardOutput.Trim(), out actual) || actual != bytes.LongLength) throw new InvalidOperationException("流式写入校验失败，目标文件可能不完整。");
+            ValidateSerial(serial);
+            if (!File.Exists(localPath)) throw new FileNotFoundException("找不到要上传的本地文件。", localPath);
+            var remote = NormalizeRemotePath(virtualPath);
+            await EnsureDevicePathWritableAsync(serial, ParentRemotePath(remote), token);
+            var push = await runner.RunAsync(adbPath, new[] { "-s", serial, "push", localPath, remote }, adbDirectory, token, null);
+            if (push.ExitCode != 0) throw new InvalidOperationException("上传设备文件失败：" + push.StandardError);
         }
 
         public async Task CreateDirectoryAsync(string serial, string virtualDirectory, string name, CancellationToken token)
