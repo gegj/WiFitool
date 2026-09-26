@@ -1,0 +1,1 @@
+define(["underscore","jquery","knockout","config/config","service"],function(e,n,i,c,r){function t(){var e=r.getCurrentlyAttachedDevicesInfo();this.deviceInfo=i.observableArray(e.attachedDevices)}return{init:function(){var e=n("#container")[0];i.cleanNode(e);var c=new t;i.applyBindings(c,e)}}});

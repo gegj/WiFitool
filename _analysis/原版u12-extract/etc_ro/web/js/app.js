@@ -1,0 +1,1 @@
+define(["config/menu","language","logout","status/statusBar","theme","router","login","config/config"],function(i,n,t,a,o,e,c,r){return{init:function(){o.init(),i.init(),n.init(),e.init(),t.init(),a.init(),r.HAS_GDPR?($("#privacy_span").show(),$("#privacy_a").show()):($("#privacy_span").hide(),$("#privacy_a").hide())}}});

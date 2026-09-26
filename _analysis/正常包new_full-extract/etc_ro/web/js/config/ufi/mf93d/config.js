@@ -1,0 +1,1 @@
+define(function(){return{IPV6_SUPPORT:!0,WIFI_BAND_SUPPORT:!0,WIFI_BANDWIDTH_SUPPORT:!0,AP_STATION_SUPPORT:!1,WEBUI_TITLE:"4G Mobile Hotspot",AUTO_MODES:[{name:"4G Only",value:"Only_LTE"}],CHANGE_SIM:[{name:"China Telecom",value:"0300"},{name:"China Mobile",value:"0200"}]}});

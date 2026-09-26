@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Security.Cryptography;
@@ -67,6 +68,11 @@ namespace WiFitool.Services
             var writerPath = Path.Combine(toolDirectory, "MTDWriter");
             var checkerPath = Path.Combine(toolDirectory, "MTDChecker");
             if (!File.Exists(writerPath) || !File.Exists(checkerPath)) throw new FileNotFoundException("工具环境中缺少 MTD 刷写文件，请先等待工具环境准备完成。", toolDirectory);
+            var firmwareLength = new FileInfo(firmwarePath).Length;
+
+            Step(reportStatus, "正在读取 /dev/mtd4 分区参数…");
+            var mtd4Info = await ReadMtd4InfoAsync(serial, firmwareLength, token);
+            Step(reportStatus, "已识别 mtd4 刷写范围：0-" + mtd4Info.LastBlock);
 
             var localMd5 = CalculateMd5(firmwarePath);
             Step(reportStatus, "正在上传固件并校验…");
@@ -91,15 +97,42 @@ namespace WiFitool.Services
             Step(reportStatus, "正在准备刷写环境…");
             await RunShellAsync(serial, "killall -9 zte_ufi zte_mifi zte_cpe goahead 2>/dev/null", token, false);
             await adbService.UploadFileAsync(serial, "/tmp/new", firmwarePath, token);
+            var deviceNewMd5 = await ReadMd5Async(serial, "/tmp/new", token);
+            LogService.Instance.Info("MTD", "实际刷写文件 MD5：本地 " + localMd5 + "，设备 " + deviceNewMd5);
+            if (!string.Equals(localMd5, deviceNewMd5, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("实际刷写文件上传校验失败。");
+            await RunRequiredShellAsync(serial, "sync", "刷写前同步设备数据失败。", token);
 
             Step(reportStatus, "正在刷写 /dev/mtd4，请勿断开设备…");
-            await RunRequiredShellAsync(serial, "/tmp/MTDWriter /dev/mtd4 0 999", "mtd4 刷写失败。", token);
+            var writerResult = await RunRequiredShellAsync(serial, "/tmp/MTDWriter /dev/mtd4 0 " + mtd4Info.LastBlock, "mtd4 刷写失败。", token);
+            EnsureMtdWriterSucceeded(writerResult);
 
             Step(reportStatus, "正在校验刷写结果…");
             await RunRequiredShellAsync(serial, "/tmp/MTDChecker -N -a /dev/mtd4 /tmp/new", "刷写结果校验失败。", token);
 
+            Step(reportStatus, "正在同步刷写结果…");
+            await RunRequiredShellAsync(serial, "sync", "同步刷写结果失败。", token);
+
+            if (firmwareLength == mtd4Info.PartitionSize)
+            {
+                Step(reportStatus, "正在独立校验 /dev/mtd4 MD5…");
+                string deviceMtdMd5;
+                try { deviceMtdMd5 = await ReadMd5Async(serial, "/dev/mtd4", token); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { throw new InvalidOperationException("独立读取 /dev/mtd4 校验失败，设备可能已在校验后掉线。" + ex.Message, ex); }
+                LogService.Instance.Info("MTD", "独立 mtd4 MD5：本地 " + localMd5 + "，设备 " + deviceMtdMd5);
+                if (!string.Equals(localMd5, deviceMtdMd5, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("独立 MD5 校验失败：设备 /dev/mtd4 与所选固件不一致。");
+            }
+            else
+            {
+                LogService.Instance.Warn("MTD", "固件大小 " + firmwareLength + " 字节与 mtd4 分区大小 " + mtd4Info.PartitionSize + " 字节不同，跳过整分区 MD5 校验。");
+                Step(reportStatus, "固件不是完整 mtd4 分区，跳过独立整分区 MD5 校验…");
+            }
+
             Step(reportStatus, "正在清理临时文件…");
-            await RunShellAsync(serial, "rm -rf /tmp/new /tmp/MTDWriter /tmp/MTDChecker /tmp/mtd4.bin 2>/dev/null", token, false);
+            await RunRequiredShellAsync(serial, "rm -rf /tmp/new /tmp/MTDWriter /tmp/MTDChecker /tmp/mtd4.bin 2>/dev/null", "清理临时文件失败，设备可能已在重启前掉线。", token);
+
+            Step(reportStatus, "正在等待设备文件系统稳定…");
+            await Task.Delay(3000, token);
 
             Step(reportStatus, "刷写完成，正在重启设备…");
             await adbService.RebootAsync(serial, token);
@@ -217,10 +250,53 @@ namespace WiFitool.Services
                    compact.IndexOf("\"result\":4", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private async Task RunRequiredShellAsync(string serial, string command, string errorMessage, CancellationToken token)
+        private async Task<ToolResult> RunRequiredShellAsync(string serial, string command, string errorMessage, CancellationToken token)
         {
             var result = await RunShellAsync(serial, command, token, true);
             if (result.ExitCode != 0) throw new InvalidOperationException(errorMessage + GetErrorText(result));
+            return result;
+        }
+
+        private async Task<Mtd4Info> ReadMtd4InfoAsync(string serial, long firmwareLength, CancellationToken token)
+        {
+            var result = await RunShellAsync(serial, "cat /proc/mtd", token, true);
+            if (result.ExitCode != 0) throw new InvalidOperationException("无法读取 /proc/mtd：" + GetErrorText(result));
+
+            var match = Regex.Match(result.StandardOutput ?? "", @"(?m)^\s*mtd4:\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+""[^""]*""");
+            if (!match.Success) throw new InvalidDataException("无法从 /proc/mtd 找到 mtd4 分区，已停止刷写。");
+
+            long partitionSize;
+            long eraseBlockSize;
+            if (!long.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out partitionSize)
+                || !long.TryParse(match.Groups[2].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out eraseBlockSize)
+                || partitionSize <= 0 || eraseBlockSize <= 0 || partitionSize % eraseBlockSize != 0)
+                throw new InvalidDataException("/proc/mtd 返回的 mtd4 参数无效，已停止刷写。");
+
+            if (firmwareLength > partitionSize)
+                throw new InvalidDataException("所选固件超过 mtd4 分区容量，已停止刷写。");
+
+            var blockCount = partitionSize / eraseBlockSize;
+            if (blockCount < 1 || blockCount > int.MaxValue)
+                throw new InvalidDataException("mtd4 擦除块数量无效，已停止刷写。");
+
+            var lastBlock = (int)blockCount - 1;
+            LogService.Instance.Info("MTD", "mtd4 容量 " + partitionSize + " 字节，擦除块 " + eraseBlockSize + " 字节，共 " + blockCount + " 块，结束块 " + lastBlock);
+            return new Mtd4Info { PartitionSize = partitionSize, LastBlock = lastBlock };
+        }
+
+        private sealed class Mtd4Info
+        {
+            public long PartitionSize { get; set; }
+            public int LastBlock { get; set; }
+        }
+
+        private static void EnsureMtdWriterSucceeded(ToolResult result)
+        {
+            var text = (result.StandardOutput ?? "") + "\n" + (result.StandardError ?? "");
+            if (!Regex.IsMatch(text, @"(?i)(bad eraseblock number|too many bad blocks|ioctl failed|cannot write|mtd\s+(?:write|erase)(?:oob)?\s+failure)")) return;
+            var detail = Regex.Replace(text.Trim(), @"\s+", " ");
+            if (detail.Length > 500) detail = detail.Substring(0, 500);
+            throw new InvalidOperationException("mtd4 刷写工具报告错误：" + detail);
         }
 
         private async Task<ToolResult> RunShellAsync(string serial, string command, CancellationToken token, bool logFailure)

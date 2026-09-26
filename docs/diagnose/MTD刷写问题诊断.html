@@ -1,0 +1,70 @@
+<html style="margin:0;padding:0;">
+<title>WiFitool MTD刷写无法开机诊断</title>
+<div style="width:100%;box-sizing:border-box;font-family:'Microsoft YaHei',Arial,sans-serif;background:#f5f7fa;padding:20px;color:#1f2937;">
+
+<h2 style="margin:0 0 6px;font-size:22px;">WiFitool MTD 刷写问题诊断（2026-09-23 15:35 刷写记录）</h2>
+<p style="margin:0 0 16px;font-size:14px;color:#6b7280;">设备：Lenovo-LM60V2.6-AK-ZX-3E-LNAC-V4.3-2605（mtd4 = rootfs，97 个擦除块 × 32KB）；固件：8ED92EE5…（WiFitool 15:34 重打包）</p>
+
+<!-- ===== 上半部分：流程对比 ===== -->
+<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+  <div style="flex:1;min-width:300px;background:#fff;border-radius:10px;padding:14px;border:1px solid #e5e7eb;">
+    <div style="font-size:15px;font-weight:bold;margin-bottom:8px;">参考 zMTD / NyaMTD 工具（正常）</div>
+    <div style="font-size:13px;color:#374151;line-height:1.7;">
+      <div>1. 连接检查 → MD5 校验 → 备份 <code>/dev/mtd4</code></div>
+      <div>2. 释放资源：<code>fota_release_space.sh｜grep -v adbd｜sh</code></div>
+      <div>3. 上传 MTDWriter/MTDChecker，<code>killall -9 zte_ufi zte_mifi zte_cpe goahead</code></div>
+      <div>4. 刷写 <code>MTDWriter /dev/mtd4 0 999</code></div>
+      <div>5. 校验 <code>MTDChecker -N -a</code></div>
+      <div>6. 清理 → <code>sleep 3</code> → <code>reboot</code> <span style="color:#059669;">（刷原样固件，不开机问题）</span></div>
+    </div>
+  </div>
+  <div style="flex:1;min-width:300px;background:#fff;border-radius:10px;padding:14px;border:1px solid #fecaca;">
+    <div style="font-size:15px;font-weight:bold;margin-bottom:8px;color:#b91c1c;">WiFitool MTD 刷写（本次：刷完无法开机）</div>
+    <div style="font-size:13px;color:#374151;line-height:1.7;">
+      <div>1. 连接检查 → MD5 校验 → 备份 <code>/dev/mtd4</code> <span style="color:#059669;">（命令一致）</span></div>
+      <div>2. 释放资源：<code>fota_release_space.sh｜grep -v adbd｜sh 2&gt;/dev/null</code> <span style="color:#059669;">（一致）</span></div>
+      <div>3. 上传 MTDWriter/MTDChecker → <code>killall -9 …</code> <span style="color:#059669;">（一致）</span></div>
+      <div>4. 刷写 <code>MTDWriter /dev/mtd4 0 999</code> <span style="color:#059669;">（一致）</span></div>
+      <div>5. 校验 <code>MTDChecker -N -a</code> 通过 <span style="color:#059669;">（一致）</span></div>
+      <div>6. 清理 → <code>reboot</code> 未发出（设备已断开）<span style="color:#b91c1c;">→ 恢复出厂设置（WiFitool 独有，本次未执行）</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 关键事件时间线 ===== -->
+<div style="background:#fff;border-radius:10px;padding:14px;border:1px solid #e5e7eb;margin-bottom:14px;">
+  <div style="font-size:15px;font-weight:bold;margin-bottom:8px;">刷写过程关键事件（来自 WiFitool 日志）</div>
+  <div style="font-size:13px;line-height:1.8;color:#374151;">
+    <div><span style="display:inline-block;width:52px;color:#2563eb;">15:34:56</span>mksquashfs 重打包完成 → 固件 8ED92EE5（注入 <code>bin/adbd</code>）</div>
+    <div><span style="display:inline-block;width:52px;color:#2563eb;">15:35:36.4</span>MTDWriter 刷写到最后报 <b>“bad eraseblock number 97, mtd4 has 97 eraseblocks”</b>，但判定“已到达分区末端”，退出码 0</div>
+    <div><span style="display:inline-block;width:52px;color:#2563eb;">15:35:36.6</span>MTDChecker 校验通过（退出码 0）</div>
+    <div><span style="display:inline-block;width:52px;color:#b91c1c;">15:35:36.9</span><b>设备从 ADB 断开</b>（清理命令即失败）→ reboot 未发出 → 设备未能重新上线 = 无法开机</div>
+  </div>
+</div>
+
+<!-- ===== 下半部分：固件差异与根因 ===== -->
+<div style="display:flex;flex-wrap:wrap;gap:12px;">
+  <div style="flex:1;min-width:300px;background:#fff;border-radius:10px;padding:14px;border:1px solid #e5e7eb;">
+    <div style="font-size:15px;font-weight:bold;margin-bottom:8px;">固件内容对比（unsquashfs -ll 逐条目核对）</div>
+    <div style="font-size:13px;color:#374151;line-height:1.8;">
+      <div><b>8ED9（15:34 刷入的）</b> vs <b>F0E8/E319（16:02/16:08 重打的）</b></div>
+      <div style="margin:6px 0 4px;padding:6px 8px;background:#fef2f2;border-radius:6px;">差异① <code>bin/adbd</code>（30,700B 注入二进制）— 仅 8ED9 有</div>
+      <div style="margin:4px 0;padding:6px 8px;background:#fef2f2;border-radius:6px;">差异② <code>sbin/rm_dev.sh</code> 行尾差异（202/203/204B，功能相同）</div>
+      <div style="padding:6px 8px;background:#f0fdf4;border-radius:6px;">其余 480+ 条目（含全部符号链接 <code>bin/echo→busybox</code> 等）完全一致 ✓</div>
+      <div style="margin-top:8px;font-size:12px;color:#6b7280;">注：符号链接在镜像中正确；解包目录显示 0 字节是 Windows 解包权限限制的假象，非镜像问题。</div>
+    </div>
+  </div>
+  <div style="flex:1;min-width:300px;background:#fff;border-radius:10px;padding:14px;border:2px solid #dc2626;">
+    <div style="font-size:15px;font-weight:bold;margin-bottom:8px;color:#b91c1c;">最终根因（已实锤）：MTD 工具版本错误</div>
+    <div style="font-size:13px;color:#374151;line-height:1.9;">
+      <div style="padding:6px 8px;background:#fef2f2;border-radius:6px;"><b>WiFitool 的 MTDWriter/MTDChecker = “MTDApp V0.10”（旧版）</b>，SHA256 2315CEA4 / C3363208</div>
+      <div style="padding:6px 8px;background:#fef2f2;border-radius:6px;"><b>zMTD更新工具用的是 “ZxMTD V1.5.2”（修正版）</b>，SHA256 9A924F6D / D943E306（二进制大小相同 23312/26544B，但 48 字节代码差异，含擦除/写入/坏块处理逻辑）</div>
+      <div style="padding:6px 8px;background:#fef2f2;border-radius:6px;">同一固件 8ED9：V0.10 刷完设备无法开机，V1.5.2 刷完正常开机 → <b>旧版工具刷写行为有缺陷</b></div>
+      <div style="margin-top:6px;padding:6px 8px;background:#f0fdf4;border-radius:6px;"><b>修复</b>：将 <code>tools\mtd\MTDWriter</code> 替换为 <code>D:\WIFItool\ufitool-2561\__lib__\res\5503C9C2</code>、<code>MTDChecker</code> 替换为 <code>res\63A635A1</code>（改名保留即可，代码无需改动）</div>
+      <div style="margin-top:6px;color:#6b7280;font-size:12px;">已排除：刷写命令序列不一致、符号链接损坏、固件内容（adbd注入，zMTD 刷同一固件正常）、注入二进制架构、恢复出厂设置（本次未执行）。</div>
+    </div>
+  </div>
+</div>
+
+</div>
+</html>

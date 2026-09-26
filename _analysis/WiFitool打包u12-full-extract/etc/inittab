@@ -1,0 +1,4 @@
+::sysinit:/etc/rc
+::respawn:-/bin/login
+::once:/sbin/sntp
+

@@ -1,0 +1,1 @@
+define(function(){return{HAS_LOGIN:!1,HAS_WIFI:!1,HAS_BATTERY:!1,GUEST_HASH:[],maxApnNumber:10,WEBUI_TITLE:"4G Hostless Modem",WIFI_SUPPORT_QR_CODE:!1,AP_STATION_SUPPORT:!1,AUTO_MODES:[{name:"4G Only",value:"Only_LTE"}]}});
